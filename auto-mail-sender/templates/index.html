@@ -531,9 +531,15 @@
                     clearInterval(countdownInterval);
                     return;
                 }
+                const hours = Math.floor(diff / (1000 * 60 * 60));
                 const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
                 const secs = Math.floor((diff % (1000 * 60)) / 1000);
-                timer.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                
+                if (hours > 0) {
+                    timer.textContent = `${hours}h ${mins.toString().padStart(2, '0')}m`;
+                } else {
+                    timer.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                }
             }
             update();
             countdownInterval = setInterval(update, 1000);

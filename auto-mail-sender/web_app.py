@@ -108,6 +108,11 @@ def build_config(form: Dict[str, str], attachments: Optional[List[str]] = None, 
     enable_followup = form.get("enable_followup") == "on"
     followup_days = int(form.get("followup_days", "3").strip())
 
+    min_delay_str = form.get("min_delay_sec", "").strip()
+    max_delay_str = form.get("max_delay_sec", "").strip()
+    min_delay_sec = int(min_delay_str) if min_delay_str and min_delay_str.isdigit() else None
+    max_delay_sec = int(max_delay_str) if max_delay_str and max_delay_str.isdigit() else None
+
     if not from_email:
         raise ValueError("Sender email is required.")
     if require_password and not app_password:
@@ -146,6 +151,8 @@ def build_config(form: Dict[str, str], attachments: Optional[List[str]] = None, 
         followup_days=followup_days,
         attachments=attachments or [],
         tracking_base_url=tracking_base_url,
+        min_delay_sec=min_delay_sec,
+        max_delay_sec=max_delay_sec,
     )
 
 
