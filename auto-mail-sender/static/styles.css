@@ -108,6 +108,15 @@ body {
   gap: 0.5rem;
 }
 
+.logo-section h1 img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: none;
+  -webkit-text-fill-color: initial;
+}
+
 .logo-section p {
   font-size: 0.75rem;
   color: var(--text-muted);
