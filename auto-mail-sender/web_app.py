@@ -6,7 +6,7 @@ from datetime import datetime, date, time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, url_for, make_response
+from flask import Flask, flash, jsonify, redirect, render_template, request, url_for, make_response, send_from_directory
 from flask_cors import CORS
 import base64
 import sqlite3
@@ -177,6 +177,12 @@ def save_attachments_upload(batch_id: str) -> List[str]:
         file.save(target)
         paths.append(str(target))
     return paths
+
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'static'),
+                               'favicon.jpeg', mimetype='image/jpeg')
 
 
 @app.route("/", methods=["GET"])
