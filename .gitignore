@@ -1,0 +1,25 @@
+# Ignore python cache
+auto-mail-sender/__pycache__/
+auto-mail-sender/*.py[cod]
+
+# Ignore envs
+auto-mail-sender/.venv/
+auto-mail-sender/venv/
+auto-mail-sender/env/
+
+# Ignore SQLite DB files
+auto-mail-sender/outreach.db
+auto-mail-sender/outreach.db-shm
+auto-mail-sender/outreach.db-wal
+
+# Ignore user uploads and attachments
+auto-mail-sender/uploads/
+
+# Ignore local passwords / credentials
+auto-mail-sender/password.txt
+auto-mail-sender/credentials.json
+auto-mail-sender/token.json
+
+# IDE settings
+.idea/
+.vscode/
