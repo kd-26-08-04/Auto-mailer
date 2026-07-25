@@ -440,6 +440,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                     "INSERT OR REPLACE INTO run_state(batch_id, day_key, next_source_order, updated_at) VALUES (?, ?, ?, ?)",
                     (engine.batch_id, day_key, 0, _utc_now_iso()),
                 )
+                conn.commit()
                 next_source_order = 0
             else:
                 next_source_order = int(cur_state[0])
@@ -547,6 +548,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                     "UPDATE run_state SET next_source_order = ?, updated_at = ? WHERE batch_id = ? AND day_key = ?",
                     (next_source_order + 1, _utc_now_iso(), engine.batch_id, day),
                 )
+                conn.commit()
                 total_skipped += 1
                 next_source_order += 1
                 continue
@@ -557,6 +559,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                     "UPDATE run_state SET next_source_order = ?, updated_at = ? WHERE batch_id = ? AND day_key = ?",
                     (next_source_order + 1, _utc_now_iso(), engine.batch_id, day),
                 )
+                conn.commit()
                 total_skipped += 1
                 next_source_order += 1
                 continue
@@ -568,6 +571,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                         "UPDATE run_state SET next_source_order = ?, updated_at = ? WHERE batch_id = ? AND day_key = ?",
                         (next_source_order + 1, _utc_now_iso(), engine.batch_id, day),
                     )
+                    conn.commit()
                     total_skipped += 1
                     next_source_order += 1
                     continue
@@ -579,6 +583,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                             "UPDATE run_state SET next_source_order = ?, updated_at = ? WHERE batch_id = ? AND day_key = ?",
                             (next_source_order + 1, _utc_now_iso(), engine.batch_id, day),
                         )
+                        conn.commit()
                         total_skipped += 1
                         next_source_order += 1
                         continue
@@ -589,6 +594,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                     "UPDATE run_state SET next_source_order = ?, updated_at = ? WHERE batch_id = ? AND day_key = ?",
                     (next_source_order + 1, _utc_now_iso(), engine.batch_id, day),
                 )
+                conn.commit()
                 next_source_order += 1
                 continue
 
@@ -598,6 +604,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                     "UPDATE run_state SET next_source_order = ?, updated_at = ? WHERE batch_id = ? AND day_key = ?",
                     (next_source_order + 1, _utc_now_iso(), engine.batch_id, day),
                 )
+                conn.commit()
                 next_source_order += 1
                 continue
 
@@ -643,6 +650,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                     "UPDATE run_state SET next_source_order = ?, updated_at = ? WHERE batch_id = ? AND day_key = ?",
                     (next_source_order + 1, _utc_now_iso(), engine.batch_id, day),
                 )
+                conn.commit()
                 next_source_order += 1
 
             except Exception as exc:
@@ -665,6 +673,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                         """,
                         (recipient_id, day, attempt_no, str(exc)[:500], _utc_now_iso()),
                     )
+                    conn.commit()
                     report("sleeping", next_at=now + timedelta(seconds=backoff), err=str(exc))
                     time.sleep(max(5, min(backoff, 60)))
                     continue
@@ -682,6 +691,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
                     "UPDATE run_state SET next_source_order = ?, updated_at = ? WHERE batch_id = ? AND day_key = ?",
                     (next_source_order + 1, _utc_now_iso(), engine.batch_id, day),
                 )
+                conn.commit()
                 next_source_order += 1
 
             sleep_sec = random.randint(min_delay, max_delay)

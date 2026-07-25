@@ -408,6 +408,7 @@
                 const res = await fetch("/status");
                 const data = await res.json();
                 
+                const wasRunning = isRunning;
                 isRunning = data.running;
                 updateUIState();
 
@@ -451,9 +452,13 @@
                 logContainer.scrollTop = logContainer.scrollHeight;
 
                 // Load recipient lists dynamically
-                if (data.running && data.last_config && data.last_config.batch_id) {
+                if (data.last_config && data.last_config.batch_id) {
+                    const batchChanged = (currentBatchId !== data.last_config.batch_id);
                     currentBatchId = data.last_config.batch_id;
-                    refreshRecipients();
+                    const transitionToStopped = (wasRunning && !data.running);
+                    if (data.running || batchChanged || transitionToStopped) {
+                        refreshRecipients();
+                    }
                 }
 
             } catch (err) {
