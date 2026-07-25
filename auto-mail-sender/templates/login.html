@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EISTATECH CRM | Login</title>
+    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='favicon.jpeg') }}" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        .auth-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 2rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        .auth-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 1.25rem;
+            padding: 2.25rem 2.5rem;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.1);
+            transition: all 0.3s ease;
+            position: relative;
+            z-index: 10;
+        }
+
+        .auth-card:hover {
+            background: var(--card-hover-bg);
+            box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.15);
+        }
+
+        .auth-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .auth-header h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .auth-header h1 img {
+            width: 32px;
+            height: 32px;
+            border-radius: 0.375rem;
+        }
+
+        .auth-header p {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+            position: relative;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text);
+            margin-bottom: 0.5rem;
+        }
+
+        .input-icon-wrapper {
+            position: relative;
+        }
+
+        .input-icon-wrapper i {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            width: 18px;
+            height: 18px;
+            pointer-events: none;
+        }
+
+        .input-icon-wrapper input {
+            width: 100%;
+            padding: 0.75rem 1rem 0.75rem 2.75rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 0.75rem;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.875rem;
+            transition: all 0.2s ease;
+        }
+
+        .input-icon-wrapper input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-light);
+        }
+
+        .auth-flash {
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            font-size: 0.875rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .auth-flash-error {
+            background: var(--danger-light);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+        }
+
+        .auth-flash-success {
+            background: var(--success-light);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+
+        .auth-btn {
+            width: 100%;
+            padding: 0.75rem 1.5rem;
+            background: var(--primary);
+            border: none;
+            border-radius: 0.75rem;
+            color: #ffffff;
+            font-size: 0.875rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .auth-btn:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .auth-btn:active {
+            transform: translateY(0);
+        }
+
+        .auth-footer {
+            text-align: center;
+            margin-top: 1.5rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .auth-footer a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
+
+        .auth-footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Top Theme Toggle Link (Removed from UI) */
+        .theme-toggle-corner {
+            display: none;
+        }
+
+        /* Hide Default Browser Password Reveal Icon */
+        input::-ms-reveal,
+        input::-ms-clear {
+            display: none;
+        }
+
+        /* Flowing Background Blobs Animation */
+        .bg-blobs {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 0;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.35;
+            animation: float 20s infinite ease-in-out;
+        }
+
+        .blob-1 {
+            top: -10%;
+            left: -10%;
+            width: 50vw;
+            height: 50vw;
+            background: radial-gradient(circle, var(--primary) 0%, transparent 70%);
+            animation-delay: 0s;
+        }
+
+        .blob-2 {
+            bottom: -10%;
+            right: -10%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(circle, var(--info) 0%, transparent 70%);
+            animation-delay: -5s;
+        }
+
+        .blob-3 {
+            top: 30%;
+            left: 40%;
+            width: 40vw;
+            height: 40vw;
+            background: radial-gradient(circle, var(--success) 0%, transparent 70%);
+            opacity: 0.2;
+            animation-duration: 25s;
+            animation-delay: -10s;
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translate(0, 0) scale(1);
+            }
+            25% {
+                transform: translate(50px, 80px) scale(1.08);
+            }
+            50% {
+                transform: translate(-30px, 40px) scale(0.95);
+            }
+            75% {
+                transform: translate(-80px, -50px) scale(1.05);
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Glowing Animated Background Blobs -->
+    <div class="bg-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h1><img src="{{ url_for('static', filename='favicon.jpeg') }}" alt="Bird Logo" /> EISTATECH</h1>
+                <p>Welcome back! Please login to your account.</p>
+            </div>
+
+            {% with messages = get_flashed_messages(category_filter=["error"]) %}
+                {% if messages %}
+                    {% for msg in messages %}
+                        <div class="auth-flash auth-flash-error">
+                            <i data-lucide="alert-circle" style="width: 18px; height: 18px;"></i>
+                            <span>{{ msg }}</span>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            {% with messages = get_flashed_messages(category_filter=["success"]) %}
+                {% if messages %}
+                    {% for msg in messages %}
+                        <div class="auth-flash auth-flash-success">
+                            <i data-lucide="check-circle" style="width: 18px; height: 18px;"></i>
+                            <span>{{ msg }}</span>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <form action="{{ url_for('login') }}" method="POST">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <div class="input-icon-wrapper">
+                        <i data-lucide="user"></i>
+                        <input type="text" id="username" name="username" placeholder="Enter your username" required autofocus />
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <div class="input-icon-wrapper">
+                        <i data-lucide="lock"></i>
+                        <input type="password" id="password" name="password" placeholder="Enter your password" style="padding-right: 2.75rem;" required />
+                        <span id="toggle-password" style="position: absolute; right: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); cursor: pointer; display: flex; align-items: center;">
+                            <i data-lucide="eye" style="width: 18px; height: 18px;"></i>
+                        </span>
+                    </div>
+                </div>
+
+                <button type="submit" class="auth-btn">
+                    <span>Login</span>
+                    <i data-lucide="arrow-right" style="width: 16px; height: 16px;"></i>
+                </button>
+            </form>
+
+            <div class="auth-footer">
+                Don't have an account? <a href="{{ url_for('register') }}">Register here</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        // Theme Initialization (Auto-applied from dashboard preference)
+        const currentTheme = localStorage.getItem('theme');
+        if (currentTheme === 'dark') {
+            document.body.classList.add('dark-mode');
+        }
+
+        // Password Visibility Toggle
+        const togglePassword = document.getElementById('toggle-password');
+        const passwordField = document.getElementById('password');
+
+        togglePassword.addEventListener('click', () => {
+            const type = passwordField.getAttribute('type') === 'password' ? 'text' : 'password';
+            passwordField.setAttribute('type', type);
+            if (type === 'text') {
+                togglePassword.innerHTML = '<i data-lucide="eye-off" style="width: 18px; height: 18px;"></i>';
+            } else {
+                togglePassword.innerHTML = '<i data-lucide="eye" style="width: 18px; height: 18px;"></i>';
+            }
+            lucide.createIcons();
+        });
+    </script>
+</body>
+</html>

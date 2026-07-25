@@ -102,6 +102,7 @@ body {
   letter-spacing: -0.03em;
   background: linear-gradient(135deg, var(--primary), #3b82f6);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   display: flex;
   align-items: center;
@@ -177,7 +178,7 @@ body {
 /* Main Content Area */
 .main-content {
   flex: 1;
-  padding: 2rem 3rem;
+  padding: 0 3rem 2rem 3rem;
   overflow-y: auto;
   position: relative;
   display: flex;
@@ -186,11 +187,27 @@ body {
 }
 
 header {
+  position: sticky;
+  top: 0;
+  background: rgba(248, 250, 252, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 100;
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid var(--border);
   padding-bottom: 1.25rem;
+  padding-top: 2rem;
+  margin-left: -3rem;
+  margin-right: -3rem;
+  padding-left: 3rem;
+  padding-right: 3rem;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+body.dark-mode header {
+  background: rgba(2, 6, 23, 0.85);
 }
 
 header h2 {
