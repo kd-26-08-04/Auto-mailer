@@ -97,6 +97,9 @@
                     <h2 id="page-title">Dashboard</h2>
                 </div>
                 <div style="display: flex; align-items: center; gap: 1rem;">
+                    <button id="check-replies-btn" class="btn-secondary" style="width: auto; display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.85rem; font-size: 0.85rem;" title="Scan IMAP Inbox for recipient replies">
+                        <i data-lucide="inbox" style="width: 16px; height: 16px;"></i> Scan Replies
+                    </button>
                     <button id="theme-toggle-btn" class="btn-secondary" style="width: auto; padding: 0.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: none; border-color: var(--border);">
                         <i data-lucide="moon" style="width: 18px; height: 18px;"></i>
                     </button>
@@ -128,16 +131,16 @@
                         <div id="stat-clicked" class="stat-value" style="color: var(--info);">0</div>
                     </div>
                     <div class="card stat-card">
+                        <div class="stat-label">Replied</div>
+                        <div id="stat-replied" class="stat-value" style="color: #8b5cf6;">0</div>
+                    </div>
+                    <div class="card stat-card">
                         <div class="stat-label">Failed</div>
                         <div id="stat-failed" class="stat-value" style="color: var(--danger);">0</div>
                     </div>
                     <div class="card stat-card">
                         <div class="stat-label">Remaining</div>
                         <div id="stat-remaining" class="stat-value">0</div>
-                    </div>
-                    <div class="card stat-card">
-                        <div class="stat-label">Progress</div>
-                        <div id="stat-progress-pct" class="stat-value">0%</div>
                     </div>
                 </div>
 
@@ -157,12 +160,14 @@
                     <div class="tabs">
                         <div class="tab active" onclick="switchTab('queue')">Queue</div>
                         <div class="tab" onclick="switchTab('sent')">Sent</div>
+                        <div class="tab" onclick="switchTab('replied')">Replied 💬</div>
                         <div class="tab" onclick="switchTab('failed')">Failed</div>
                         <div class="tab" onclick="switchTab('preview-tab')">Preview</div>
                     </div>
 
                     <div id="tab-queue" class="tab-content recipient-list"></div>
                     <div id="tab-sent" class="tab-content recipient-list" style="display: none;"></div>
+                    <div id="tab-replied" class="tab-content recipient-list" style="display: none;"></div>
                     <div id="tab-failed" class="tab-content recipient-list" style="display: none;"></div>
                     <div id="tab-preview-tab" class="tab-content recipient-list" style="display: none;">
                         <p id="preview-placeholder" style="color: var(--text-muted); font-size: 0.875rem; padding: 1rem;">No preview loaded.</p>
@@ -209,18 +214,24 @@
                                 <input name="batch_id" id="batch_id_input" value="{{ defaults.get('batch_id', '') }}" required />
                             </div>
                             <div class="form-group">
-                                <label>Subject Template</label>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                                    <label style="margin-bottom: 0;">Subject Template</label>
+                                    <span style="font-size: 0.72rem; color: var(--primary); background: var(--primary-light); padding: 2px 6px; border-radius: 4px;">Spintax: <code>{Hello|Hi|Hey}</code></span>
+                                </div>
                                 <input name="subject_template" required value="{{ defaults.get('subject_template', '') }}" />
                             </div>
                             <div class="form-group">
-                                <label>Body Template (HTML Supported)</label>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                                    <label style="margin-bottom: 0;">Body Template (HTML Supported)</label>
+                                    <span style="font-size: 0.72rem; color: var(--primary); background: var(--primary-light); padding: 2px 6px; border-radius: 4px;">Supports Spintax & <code>{variables}</code></span>
+                                </div>
                                 <div id="editor-container"></div>
                                 <input type="hidden" name="body_template" id="body_template_input" required />
                                 <div id="quill-fallback-content" style="display:none;">{{ defaults.get('body_template', '') | safe }}</div>
                             </div>
                             <div class="form-group">
-                                <label>Recipients CSV</label>
-                                <input name="recipients_csv" type="file" accept=".csv" required />
+                                <label>Recipients File (.csv, .xlsx, .xls)</label>
+                                <input name="recipients_csv" type="file" accept=".csv, .xlsx, .xls" required />
                             </div>
                             <div class="form-group">
                                 <label>Attachments (Optional)</label>
@@ -228,7 +239,12 @@
                             </div>
                             <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-top: 1rem;">
                                 <input name="consent_required" type="checkbox" style="width: auto; margin: 0;" {% if defaults.get('consent_required', 'on') in ['on', True, 'true'] %}checked{% endif %} />
-                                <label style="margin: 0;">Require <code>consent=true</code> in CSV</label>
+                                <label style="margin: 0;">Require <code>consent=true</code> in recipient file</label>
+                            </div>
+
+                            <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-top: 1rem;">
+                                <input id="enable-reply-tracking" name="enable_reply_tracking" type="checkbox" style="width: auto; margin: 0;" {% if defaults.get('enable_reply_tracking', True) %}checked{% endif %} />
+                                <label style="margin: 0; cursor: pointer;" for="enable-reply-tracking"><strong>Auto-Stop on Reply</strong> (Stop sending when recipient replies)</label>
                             </div>
 
                             <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-top: 1rem;">
@@ -242,7 +258,7 @@
                             </div>
                             
                             <div class="grid-2" style="margin-top: 2rem;">
-                                <button type="button" id="preview-btn" class="btn-secondary"><i data-lucide="eye"></i> Preview</button>
+                                <button type="button" id="preview-btn" class="btn-secondary"><i data-lucide="eye"></i> Preview (Spintax)</button>
                                 <button type="submit" id="start-btn" class="btn-primary"><i data-lucide="play"></i> Start Campaign</button>
                             </div>
                             <button type="button" id="stop-btn" class="btn-danger" style="margin-top: 0.75rem; display: none;"><i data-lucide="square"></i> Stop Campaign</button>
@@ -273,19 +289,19 @@
                         </div>
                     </div>
 
-                    <!-- SMTP Configuration Panel -->
+                    <!-- SMTP & IMAP Configuration Panel -->
                     <div class="card">
-                        <h2><i data-lucide="mail"></i> SMTP Configurations (Gmail)</h2>
+                        <h2><i data-lucide="mail"></i> Email Credentials (SMTP & IMAP)</h2>
                         <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem; margin-top: 0.25rem;">
-                            These credentials are used by all parallel campaigns. Save them here so you do not have to enter them each time.
+                            Used for sending emails (SMTP) and listening for incoming replies (IMAP).
                         </p>
                         <form id="settings-form">
                             <div class="form-group">
-                                <label>Sender Gmail</label>
+                                <label>Sender Gmail / Email</label>
                                 <input id="settings-smtp-email" name="smtp_email" type="email" required placeholder="you@gmail.com" />
                             </div>
                             <div class="form-group">
-                                <label>Gmail App Password</label>
+                                <label>Gmail App Password (16 characters)</label>
                                 <div class="input-icon-wrapper" style="position: relative;">
                                     <input id="settings-smtp-password" name="smtp_app_password" type="password" required placeholder="Enter new password or leave as is" style="padding-right: 2.75rem;" />
                                     <span id="toggle-settings-password" style="position: absolute; right: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); cursor: pointer; display: flex; align-items: center;">
@@ -293,7 +309,27 @@
                                     </span>
                                 </div>
                             </div>
-                            <button type="submit" class="btn-primary" style="margin-top: 1rem; width: 100%;"><i data-lucide="save"></i> Save SMTP Settings</button>
+                            
+                            <details style="margin-top: 1rem; border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem 1rem;">
+                                <summary style="font-size: 0.85rem; font-weight: 600; color: var(--text); cursor: pointer;">
+                                    Advanced IMAP Inbox Settings (Auto-Stop on Reply)
+                                </summary>
+                                <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                                    <div class="grid-2">
+                                        <div class="form-group">
+                                            <label style="font-size: 0.8rem;">IMAP Host</label>
+                                            <input id="settings-imap-host" name="imap_host" value="imap.gmail.com" />
+                                        </div>
+                                        <div class="form-group">
+                                            <label style="font-size: 0.8rem;">IMAP Port</label>
+                                            <input id="settings-imap-port" name="imap_port" type="number" value="993" />
+                                        </div>
+                                    </div>
+                                    <p style="font-size: 0.75rem; color: var(--text-muted);">Defaults to your Gmail credentials automatically.</p>
+                                </div>
+                            </details>
+
+                            <button type="submit" class="btn-primary" style="margin-top: 1.25rem; width: 100%;"><i data-lucide="save"></i> Save Credentials</button>
                         </form>
 
                         <!-- Collapsible App Password Help Card -->
@@ -497,10 +533,15 @@
                 document.getElementById('stat-failed').textContent = data.failed_count || 0;
                 document.getElementById('stat-opened').textContent = data.opened_count || 0;
                 document.getElementById('stat-clicked').textContent = data.clicked_count || 0;
-                document.getElementById('stat-remaining').textContent = (data.total_to_send || 0) - (data.sent_count || 0) - (data.failed_count || 0) - (data.skipped_count || 0);
+                if (document.getElementById('stat-replied')) {
+                    document.getElementById('stat-replied').textContent = data.replied_count || 0;
+                }
+                document.getElementById('stat-remaining').textContent = Math.max(0, (data.total_to_send || 0) - (data.sent_count || 0) - (data.failed_count || 0) - (data.skipped_count || 0));
                 
                 const pct = data.total_to_send > 0 ? Math.round(((data.sent_count + data.failed_count + data.skipped_count) / data.total_to_send) * 100) : 0;
-                document.getElementById('stat-progress-pct').textContent = `${pct}%`;
+                if (document.getElementById('stat-progress-pct')) {
+                    document.getElementById('stat-progress-pct').textContent = `${pct}%`;
+                }
                 document.getElementById('progress-bar-fill').style.width = `${pct}%`;
 
                 // Current Task Status
@@ -557,16 +598,17 @@
         function renderRecipientLists(recipients) {
             const queueList = document.getElementById('tab-queue');
             const sentList = document.getElementById('tab-sent');
+            const repliedList = document.getElementById('tab-replied');
             const failedList = document.getElementById('tab-failed');
 
-            const queueHtml = recipients.filter(r => r.status === 'pending').map(r => `
+            const queueHtml = recipients.filter(r => r.status === 'pending' && !r.replied).map(r => `
                 <div class="recipient-item">
                     <span><span class="status-dot dot-pending"></span>${r.email}</span>
                     <span style="color: var(--text-muted);">Waiting</span>
                 </div>
             `).join('');
 
-            const sentHtml = recipients.filter(r => r.status === 'sent').map(r => {
+            const sentHtml = recipients.filter(r => r.status === 'sent' && !r.replied).map(r => {
                 let badges = "";
                 if (r.opened) {
                     badges += ' <span class="badge badge-opened" style="background:rgba(16,185,129,0.08); color:var(--success); border:1px solid rgba(16,185,129,0.15); font-size:0.7rem; padding:2px 6px; margin-left:5px; text-transform:none;">Opened 👁️</span>';
@@ -577,10 +619,17 @@
                 return `
                     <div class="recipient-item">
                         <span><span class="status-dot dot-sent"></span>${r.email}${badges}</span>
-                        <span style="color: var(--success);">${new Date(r.sent_at).toLocaleTimeString()}</span>
+                        <span style="color: var(--success);">${r.sent_at ? new Date(r.sent_at).toLocaleTimeString() : 'Sent'}</span>
                     </div>
                 `;
             }).join('');
+
+            const repliedHtml = recipients.filter(r => r.replied || r.status === 'replied').map(r => `
+                <div class="recipient-item" style="border-left: 3px solid #8b5cf6;">
+                    <span><span class="status-dot" style="background: #8b5cf6;"></span>${r.email} <span class="badge" style="background:rgba(139,92,246,0.1); color:#8b5cf6; border:1px solid rgba(139,92,246,0.2); font-size:0.7rem; padding:2px 6px; margin-left:5px; text-transform:none;">Replied 💬</span></span>
+                    <span style="color: #8b5cf6; font-weight: 500;">Sequence Paused</span>
+                </div>
+            `).join('');
 
             const failedHtml = recipients.filter(r => r.status === 'failed').map(r => `
                 <div class="recipient-item" title="${r.error || ''}">
@@ -591,7 +640,38 @@
 
             queueList.innerHTML = queueHtml || '<p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">Empty</p>';
             sentList.innerHTML = sentHtml || '<p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">None yet</p>';
+            if (repliedList) {
+                repliedList.innerHTML = repliedHtml || '<p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">No replies detected yet</p>';
+            }
             failedList.innerHTML = failedHtml || '<p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">None yet</p>';
+        }
+
+        // Scan replies button action
+        const checkRepliesBtn = document.getElementById('check-replies-btn');
+        if (checkRepliesBtn) {
+            checkRepliesBtn.onclick = async () => {
+                checkRepliesBtn.disabled = true;
+                const originalHtml = checkRepliesBtn.innerHTML;
+                checkRepliesBtn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:16px; height:16px;"></i> Scanning...';
+                lucide.createIcons();
+                try {
+                    const res = await fetch("/check-replies", { method: 'POST' });
+                    const data = await res.json();
+                    if (data.status === 'ok') {
+                        showToast(data.message || `Scan completed! Found ${data.replied_count} replies.`, "success");
+                        refreshStatus();
+                        refreshRecipients();
+                    } else {
+                        showToast(data.message || "Failed to scan inbox replies.", "error");
+                    }
+                } catch (err) {
+                    showToast("Error checking replies: " + err, "error");
+                } finally {
+                    checkRepliesBtn.disabled = false;
+                    checkRepliesBtn.innerHTML = originalHtml;
+                    lucide.createIcons();
+                }
+            };
         }
 
         function startCountdown(targetIso) {
@@ -642,8 +722,10 @@
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
             document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-            document.getElementById(`tab-${tabId}`).style.display = 'block';
-            document.querySelector(`.tab[onclick="switchTab('${tabId}')"]`).classList.add('active');
+            const target = document.getElementById(`tab-${tabId}`);
+            if (target) target.style.display = 'block';
+            const tabBtn = document.querySelector(`.tab[onclick="switchTab('${tabId}')"]`);
+            if (tabBtn) tabBtn.classList.add('active');
         }
 
         function showToast(msg, type = 'info') {
@@ -686,6 +768,12 @@
                     
                     document.getElementById('settings-smtp-email').value = data.smtp_email || '';
                     document.getElementById('settings-smtp-password').value = data.smtp_app_password || '';
+                    if (document.getElementById('settings-imap-host')) {
+                        document.getElementById('settings-imap-host').value = data.imap_host || 'imap.gmail.com';
+                    }
+                    if (document.getElementById('settings-imap-port')) {
+                        document.getElementById('settings-imap-port').value = data.imap_port || 993;
+                    }
                 }
             } catch (err) {
                 console.error("Failed to load user settings:", err);

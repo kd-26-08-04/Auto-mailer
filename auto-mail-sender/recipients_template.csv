@@ -1,0 +1,4 @@
+email,first_name,company,role,sender_name,consent
+user1@example.com,Alex,Acme Corp,Marketing Manager,Your Name,TRUE
+user2@example.com,Sophia,Tech Innovators,CTO,Your Name,TRUE
+user3@example.com,David,Global Dynamics,Director,Your Name,TRUE

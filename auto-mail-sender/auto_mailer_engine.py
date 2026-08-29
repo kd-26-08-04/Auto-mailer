@@ -1,5 +1,8 @@
 import csv
 import dataclasses
+import email
+from email.header import decode_header
+import imaplib
 import json
 import os
 import random
@@ -130,6 +133,13 @@ class EngineConfig:
     # Tracking base URL (e.g. http://127.0.0.1:5001)
     tracking_base_url: str = ""
 
+    # Auto-stop on reply (IMAP settings)
+    enable_reply_tracking: bool = False
+    imap_host: str = "imap.gmail.com"
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: str = ""
+
 
 @dataclass
 class ProgressUpdate:
@@ -153,21 +163,146 @@ def init_db(db_path: str = "") -> None:
     db.run_state.create_index([("user_id", 1), ("batch_id", 1), ("day_key", 1)], unique=True)
 
 
-def _parse_csv_recipients(csv_path: str) -> List[Dict[str, Any]]:
+def resolve_spintax(text: str) -> str:
+    """Recursively resolves spintax like {Option 1|Option 2|Option 3} while ignoring variable interpolations like {first_name}."""
+    if not text:
+        return ""
+    pattern = re.compile(r'\{([^{}]*\|[^{}]*)\}')
+    # Loop to resolve nested spintax
+    for _ in range(10):  # limit nesting depth to prevent infinite loops
+        match = pattern.search(text)
+        if not match:
+            break
+        choices = match.group(1).split('|')
+        chosen = random.choice(choices)
+        text = text[:match.start()] + chosen + text[match.end():]
+    return text
+
+
+def _parse_recipients_file(file_path: str) -> List[Dict[str, Any]]:
+    """Parses recipients from CSV, Excel .xlsx, or .xls."""
     rows: List[Dict[str, Any]] = []
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append({k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()})
+    lower_path = file_path.lower()
+    
+    if lower_path.endswith('.xlsx') or lower_path.endswith('.xls'):
+        import openpyxl
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+        ws = wb.active
+        all_rows = list(ws.iter_rows(values_only=True))
+        if not all_rows:
+            return []
+        headers = [str(h).strip().lower() if h is not None else "" for h in all_rows[0]]
+        for row in all_rows[1:]:
+            if not any(row):
+                continue
+            row_dict = {}
+            for col_idx, header in enumerate(headers):
+                if not header:
+                    continue
+                val = row[col_idx] if col_idx < len(row) else ""
+                val_str = str(val).strip() if val is not None else ""
+                row_dict[header] = val_str
+            if row_dict and row_dict.get("email"):
+                rows.append(row_dict)
+    else:
+        # Default to CSV
+        with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                cleaned = {(k.strip().lower() if isinstance(k, str) else k): (v.strip() if isinstance(v, str) else v) for k, v in row.items() if k}
+                if cleaned and cleaned.get("email"):
+                    rows.append(cleaned)
     return rows
 
 
+# Backwards compatibility alias
+_parse_csv_recipients = _parse_recipients_file
+
+
 def _render_template(template: str, data: Dict[str, Any]) -> str:
-    """Simple {field} interpolation using Python's format_map."""
+    """First resolves spintax, then performs {field} interpolation using Python's format_map."""
+    spintax_resolved = resolve_spintax(template)
     class SafeDict(dict):
         def __missing__(self, key: str) -> str:
             return ""
-    return template.format_map(SafeDict(data))
+    # Make keys lowercase matching for flexibility
+    safe_data = {k.lower(): v for k, v in data.items()}
+    # Also keep original keys
+    for k, v in data.items():
+        safe_data[k] = v
+    return spintax_resolved.format_map(SafeDict(safe_data))
+
+
+def check_inbox_replies(engine: EngineConfig) -> Dict[str, Any]:
+    """Connects to IMAP inbox, scans recent emails for replies from recipients, and updates DB."""
+    username = engine.imap_username or engine.from_email
+    password = engine.imap_password or engine.smtp_app_password
+    if not username or not password:
+        return {"status": "skipped", "message": "IMAP credentials not configured", "replied_count": 0}
+    
+    host = engine.imap_host or "imap.gmail.com"
+    port = int(engine.imap_port or 993)
+    
+    db = get_db()
+    user_recipients = set(
+        doc["email"].lower()
+        for doc in db.recipients.find({"user_id": engine.user_id}, {"email": 1})
+    )
+    if not user_recipients:
+        return {"status": "ok", "message": "No recipients found to check", "replied_count": 0}
+    
+    replied_emails = set()
+    try:
+        mail = imaplib.IMAP4_SSL(host, port, timeout=20)
+        mail.login(username, password)
+        mail.select("INBOX", readonly=True)
+        
+        since_date = (datetime.now() - timedelta(days=14)).strftime("%d-%b-%Y")
+        typ, data = mail.search(None, f'(SINCE "{since_date}")')
+        
+        if typ == "OK" and data and data[0]:
+            msg_ids = data[0].split()
+            # Scan last 150 headers
+            for m_id in msg_ids[-150:]:
+                try:
+                    _, msg_data = mail.fetch(m_id, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+                    if not msg_data or not msg_data[0] or not isinstance(msg_data[0], tuple):
+                        continue
+                    msg = email.message_from_bytes(msg_data[0][1])
+                    from_header = msg.get("From", "")
+                    sender_name, sender_email = email.utils.parseaddr(from_header)
+                    sender_email = sender_email.strip().lower()
+                    if sender_email in user_recipients:
+                        replied_emails.add(sender_email)
+                except Exception:
+                    continue
+        
+        mail.close()
+        mail.logout()
+    except Exception as e:
+        return {"status": "error", "message": f"IMAP connection failed: {str(e)}", "replied_count": 0}
+    
+    marked_count = 0
+    now_iso = _utc_now_iso()
+    for email_addr in replied_emails:
+        res = db.recipients.update_many(
+            {"user_id": engine.user_id, "email": email_addr},
+            {"$set": {"replied": True, "replied_at": now_iso, "do_not_contact": True}}
+        )
+        rec_ids = [d["_id"] for d in db.recipients.find({"user_id": engine.user_id, "email": email_addr}, {"_id": 1})]
+        if rec_ids:
+            db.send_log.update_many(
+                {"user_id": engine.user_id, "recipient_id": {"$in": rec_ids}},
+                {"$set": {"replied": True}}
+            )
+        marked_count += res.modified_count
+        
+    return {
+        "status": "ok",
+        "message": f"Scanned inbox. Identified {len(replied_emails)} replied recipient(s).",
+        "replied_count": len(replied_emails),
+        "replied_emails": list(replied_emails)
+    }
 
 
 def _is_truthy_consent(value: Any, truthy: Iterable[str]) -> bool:
@@ -188,14 +323,14 @@ def ensure_batch(engine: EngineConfig) -> None:
 
 def upsert_batch_recipients(engine: EngineConfig, csv_path: str) -> int:
     """Imports recipients into recipients collection and maps them to batch_recipients."""
-    rows = _parse_csv_recipients(csv_path)
+    rows = _parse_recipients_file(csv_path)
     if not rows:
         return 0
 
     required = ["email"]
     for r in required:
         if r not in rows[0]:
-            raise ValueError(f"CSV must include a '{r}' column.")
+            raise ValueError(f"File must include an '{r}' column header.")
 
     db = get_db()
 
@@ -204,7 +339,7 @@ def upsert_batch_recipients(engine: EngineConfig, csv_path: str) -> int:
 
     inserted = 0
     for idx, row in enumerate(rows):
-        email = str(row.get("email", "")).strip()
+        email = str(row.get("email", "")).strip().lower()
         if not email:
             continue
 
@@ -366,6 +501,13 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
     day = day_key_local(_local_now())
     batch_list = _get_sorted_batch_emails(engine)
 
+    # If reply tracking is enabled, scan inbox at campaign start
+    if getattr(engine, "enable_reply_tracking", False):
+        try:
+            check_inbox_replies(engine)
+        except Exception:
+            pass
+
     # Load history
     sent_ever_recipient_ids = set()
     last_sent_times: Dict[str, datetime] = {}
@@ -444,6 +586,7 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
         )
         on_progress(update)
 
+    processed_counter = 0
     while True:
         if getattr(stop_flag, "is_set", None) and callable(getattr(stop_flag, "is_set")) and stop_flag.is_set():
             report("stopped")
@@ -451,6 +594,13 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
         if getattr(stop_flag, "is_set", None) and not callable(getattr(stop_flag, "is_set")) and bool(stop_flag.is_set):
             report("stopped")
             break
+
+        # Periodically scan inbox if reply tracking enabled (every 10 processed recipients)
+        if getattr(engine, "enable_reply_tracking", False) and processed_counter > 0 and processed_counter % 10 == 0:
+            try:
+                check_inbox_replies(engine)
+            except Exception:
+                pass
 
         now = _local_now()
         if not engine.window.contains(now):
@@ -480,7 +630,30 @@ def run_outreach(engine: EngineConfig, recipients_csv_path: str, stop_flag: Any,
             break
 
         recipient_id, to_email, data_dict = batch_list[next_source_order]
+        processed_counter += 1
         report("running", current=to_email)
+
+        # Auto-Stop on Reply / Do-not-contact guard
+        rec_doc = db.recipients.find_one({"_id": ObjectId(recipient_id)}, {"replied": 1, "do_not_contact": 1})
+        if rec_doc and (rec_doc.get("replied") or rec_doc.get("do_not_contact")):
+            db.send_log.update_one(
+                {"user_id": engine.user_id, "recipient_id": ObjectId(recipient_id), "day_key": day},
+                {"$set": {
+                    "status": "skipped",
+                    "attempt_no": 0,
+                    "sent_at": None,
+                    "error": "recipient_replied_or_unsubscribed",
+                    "updated_at": _utc_now_iso()
+                }},
+                upsert=True
+            )
+            db.run_state.update_one(
+                {"user_id": engine.user_id, "batch_id": engine.batch_id, "day_key": day},
+                {"$set": {"next_source_order": next_source_order + 1, "updated_at": _utc_now_iso()}}
+            )
+            total_skipped += 1
+            next_source_order += 1
+            continue
 
         # Consent guard
         if not consent_ok(data_dict):

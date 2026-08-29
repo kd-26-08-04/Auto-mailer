@@ -136,6 +136,12 @@ def build_config(form: Dict[str, str], user_id: str, attachments: Optional[List[
     enable_followup = form.get("enable_followup") == "on"
     followup_days = int(form.get("followup_days", "3").strip())
 
+    enable_reply_tracking = form.get("enable_reply_tracking") == "on"
+    imap_host = form.get("imap_host", "").strip() or user.get("imap_host", "imap.gmail.com")
+    imap_port = int(form.get("imap_port", "993").strip() or user.get("imap_port", 993))
+    imap_username = form.get("imap_username", "").strip() or user.get("imap_username", "").strip() or from_email
+    imap_password = form.get("imap_password", "").strip() or user.get("imap_password", "").strip() or app_password
+
     min_delay_str = form.get("min_delay_sec", "").strip()
     max_delay_str = form.get("max_delay_sec", "").strip()
     min_delay_sec = int(min_delay_str) if min_delay_str and min_delay_str.isdigit() else None
@@ -177,16 +183,24 @@ def build_config(form: Dict[str, str], user_id: str, attachments: Optional[List[
         tracking_base_url=tracking_base_url,
         min_delay_sec=min_delay_sec,
         max_delay_sec=max_delay_sec,
+        enable_reply_tracking=enable_reply_tracking,
+        imap_host=imap_host,
+        imap_port=imap_port,
+        imap_username=imap_username,
+        imap_password=imap_password,
     )
 
 
 def save_csv_upload() -> str:
-    if "recipients_csv" not in request.files:
-        raise ValueError("CSV upload is required.")
-    file = request.files["recipients_csv"]
-    if file.filename == "" or file.filename is None or not file.filename.lower().endswith(".csv"):
-        raise ValueError("Please upload a valid .csv file.")
-    target = UPLOAD_DIR / f"{uuid.uuid4().hex}.csv"
+    file = request.files.get("recipients_csv") or request.files.get("recipients_file")
+    if not file or not file.filename:
+        raise ValueError("Recipients file upload is required (.csv, .xlsx, or .xls).")
+    
+    ext = Path(file.filename).suffix.lower()
+    if ext not in [".csv", ".xlsx", ".xls"]:
+        raise ValueError(f"Unsupported file type '{ext}'. Please upload a valid .csv, .xlsx, or .xls file.")
+        
+    target = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext}"
     file.save(target)
     return str(target)
 
@@ -306,13 +320,24 @@ def settings():
     if request.method == "POST":
         smtp_email = request.form.get("smtp_email", "").strip()
         smtp_app_password = request.form.get("smtp_app_password", "").strip()
+        imap_host = request.form.get("imap_host", "").strip() or "imap.gmail.com"
+        imap_port = int(request.form.get("imap_port", "993").strip() or 993)
+        imap_username = request.form.get("imap_username", "").strip()
+        imap_password = request.form.get("imap_password", "").strip()
         
         if not smtp_email:
             return jsonify({"success": False, "error": "Sender email is required."}), 400
             
-        update_doc = {"smtp_email": smtp_email}
+        update_doc = {
+            "smtp_email": smtp_email,
+            "imap_host": imap_host,
+            "imap_port": imap_port,
+            "imap_username": imap_username
+        }
         if smtp_app_password and smtp_app_password != "********":
             update_doc["smtp_app_password"] = smtp_app_password
+        if imap_password and imap_password != "********":
+            update_doc["imap_password"] = imap_password
             
         db.users.update_one({"_id": ObjectId(user_id)}, {"$set": update_doc})
         return jsonify({"success": True, "message": "Settings saved successfully."})
@@ -322,14 +347,65 @@ def settings():
         return jsonify({"success": False, "error": "User not found."}), 404
         
     masked_pw = "********" if user.get("smtp_app_password") else ""
+    masked_imap_pw = "********" if user.get("imap_password") else ""
     return jsonify({
         "success": True,
         "username": user.get("username"),
         "full_name": user.get("full_name"),
         "phone": user.get("phone"),
         "smtp_email": user.get("smtp_email", ""),
-        "smtp_app_password": masked_pw
+        "smtp_app_password": masked_pw,
+        "imap_host": user.get("imap_host", "imap.gmail.com"),
+        "imap_port": user.get("imap_port", 993),
+        "imap_username": user.get("imap_username", ""),
+        "imap_password": masked_imap_pw
     })
+
+
+@app.route("/check-replies", methods=["POST"])
+def trigger_check_replies():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    u_state = get_user_state(user_id)
+    try:
+        db = get_db()
+        user = db.users.find_one({"_id": ObjectId(user_id)})
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        from_email = user.get("smtp_email", "").strip()
+        app_password = user.get("smtp_app_password", "").strip()
+        
+        imap_host = request.form.get("imap_host", "").strip() or user.get("imap_host", "imap.gmail.com")
+        imap_port = int(request.form.get("imap_port", "993").strip() or user.get("imap_port", 993))
+        imap_username = request.form.get("imap_username", "").strip() or user.get("imap_username", "").strip() or from_email
+        imap_password = request.form.get("imap_password", "").strip() or user.get("imap_password", "").strip() or app_password
+        
+        if not imap_username or not imap_password:
+            return jsonify({"status": "error", "message": "IMAP credentials not configured. Please save your email & app password in Settings."}), 400
+        
+        from auto_mailer_engine import EngineConfig, check_inbox_replies
+        cfg = EngineConfig(
+            user_id=user_id,
+            batch_id="reply_check",
+            from_email=from_email,
+            smtp_host="smtp.gmail.com",
+            smtp_port=587,
+            smtp_app_password=app_password,
+            enable_reply_tracking=True,
+            imap_host=imap_host,
+            imap_port=imap_port,
+            imap_username=imap_username,
+            imap_password=imap_password
+        )
+        res = check_inbox_replies(cfg)
+        u_state.log(f"[Inbox Scan] {res.get('message', '')}")
+        return jsonify(res)
+    except Exception as e:
+        u_state.log(f"[Inbox Scan Error] {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/", methods=["GET"])
@@ -342,10 +418,13 @@ def index():
         "delay_sec": "60",
         "window_start": "09:00",
         "window_end": "17:00",
-        "subject_template": "Hello {first_name} - quick question",
-        "body_template": "Hi {first_name},\n\nWould love to connect briefly about {company}.\n\nThanks,\n{sender_name}",
+        "subject_template": "{Hello|Hi|Hey} {first_name} - quick question",
+        "body_template": "{Hi|Hello} {first_name},\n\nWould love to connect briefly regarding {company}.\n\nBest regards,\n{sender_name}",
         "enable_followup": False,
         "followup_days": "3",
+        "enable_reply_tracking": True,
+        "imap_host": "imap.gmail.com",
+        "imap_port": "993"
     }
     return render_template("index.html", defaults=defaults, username=session.get("full_name") or session.get("username"))
 
@@ -496,10 +575,11 @@ def status():
         batch_id = u_state.last_config.get("batch_id")
         opened_count = 0
         clicked_count = 0
+        replied_count = 0
         
-        if batch_id:
-            try:
-                db = get_db()
+        try:
+            db = get_db()
+            if batch_id:
                 rec_ids = [doc["recipient_id"] for doc in db.batch_recipients.find({"user_id": user_id, "batch_id": batch_id}, {"recipient_id": 1})]
                 opened_count = db.send_log.count_documents({
                     "user_id": user_id,
@@ -511,8 +591,18 @@ def status():
                     "recipient_id": {"$in": rec_ids},
                     "clicked": {"$gt": 0}
                 })
-            except Exception:
-                pass
+                replied_count = db.recipients.count_documents({
+                    "user_id": user_id,
+                    "_id": {"$in": rec_ids},
+                    "replied": True
+                })
+            else:
+                replied_count = db.recipients.count_documents({
+                    "user_id": user_id,
+                    "replied": True
+                })
+        except Exception:
+            pass
 
         payload = {
             "running": u_state.running,
@@ -526,6 +616,7 @@ def status():
             "skipped_count": u_state.skipped_count,
             "opened_count": opened_count,
             "clicked_count": clicked_count,
+            "replied_count": replied_count,
             "last_result": u_state.last_result,
             "last_error": u_state.last_error,
             "last_config": to_json_safe(u_state.last_config),
@@ -572,6 +663,7 @@ def recipients():
             {
                 "$project": {
                     "email": "$rec_info.email",
+                    "replied": "$rec_info.replied",
                     "log": {"$arrayElemAt": ["$log_info", 0]}
                 }
             }
@@ -580,13 +672,15 @@ def recipients():
         data = []
         for doc in results:
             log = doc.get("log") or {}
+            is_replied = bool(doc.get("replied") or log.get("replied"))
             data.append({
                 "email": doc["email"],
-                "status": log.get("status", "pending"),
+                "status": "replied" if is_replied else log.get("status", "pending"),
                 "sent_at": log.get("sent_at"),
                 "error": log.get("error"),
                 "opened": bool(log.get("opened", 0)),
-                "clicked": int(log.get("clicked", 0))
+                "clicked": int(log.get("clicked", 0)),
+                "replied": is_replied
             })
         return jsonify({"success": True, "recipients": data})
     except Exception as exc:
