@@ -3,349 +3,291 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>EISTATECH Mailer | Premium Outreach</title>
+    <title>EISTATECH Mailer | Sequences</title>
     <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='favicon.jpeg') }}" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
-    <!-- Quill.js Rich HTML Editor Assets -->
     <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
     <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        /* Toast Notification Styles */
-        .toast {
-            background: #ffffff;
-            border: 1px solid var(--border);
-            border-radius: 0.75rem;
-            padding: 1rem 1.25rem;
-            box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.05);
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            min-width: 320px;
-            max-width: 420px;
-            animation: slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            color: var(--text);
-            pointer-events: auto;
-        }
-        .toast-success { border-left: 4px solid var(--success); }
-        .toast-error { border-left: 4px solid var(--danger); }
-        .toast-warning { border-left: 4px solid var(--warning); }
-        .toast-info { border-left: 4px solid var(--primary); }
-        
-        .toast i {
-            width: 20px;
-            height: 20px;
-            flex-shrink: 0;
-        }
-
-        @keyframes slideInRight {
-            from { transform: translateX(120%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-
-        @keyframes slideOutRight {
-            from { transform: translateX(0); opacity: 1; }
-            to { transform: translateX(120%); opacity: 0; }
-        }
-    </style>
 </head>
 <body>
     <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 12px; pointer-events: none;"></div>
     <div class="app-layout">
-        <!-- Sidebar Navigation -->
         <aside class="sidebar">
             <div class="logo-section">
-                <h1><img src="{{ url_for('static', filename='favicon.jpeg') }}" alt="Bird Logo" /> EISTATECH</h1>
-                <p>Premium Outreach</p>
+                <h1><img src="{{ url_for('static', filename='favicon.jpeg') }}" alt="Logo" /> EISTATECH</h1>
+                <p>Sequence Outreach</p>
             </div>
-            
             <nav class="nav-menu">
                 <div class="nav-item active" data-view="dashboard" onclick="switchView('dashboard')">
                     <i data-lucide="layout-dashboard"></i> Dashboard
                 </div>
-                <div class="nav-item" data-view="setup" onclick="switchView('setup')">
-                    <i data-lucide="settings"></i> Campaign Setup
+                <div class="nav-item" data-view="sequences" onclick="switchView('sequences')">
+                    <i data-lucide="git-branch"></i> Sequences
+                </div>
+                <div class="nav-item" data-view="inbox" onclick="switchView('inbox')">
+                    <i data-lucide="mail-check"></i> Inbox
+                    <span id="inbox-badge" class="nav-badge hidden">0</span>
+                </div>
+                <div class="nav-item" data-view="analytics" onclick="switchView('analytics')">
+                    <i data-lucide="bar-chart-2"></i> Analytics
                 </div>
                 <div class="nav-item" data-view="settings" onclick="switchView('settings')">
                     <i data-lucide="user-cog"></i> Settings
                 </div>
             </nav>
-            
             <div class="sidebar-footer" style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; padding-top: 1rem; border-top: 1px solid var(--border);">
-                <div>v1.1.0 • Connected</div>
+                <div>v2.0 • Backend Worker</div>
                 {% if username %}
                 <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 0.25rem;">
                     <div style="display: flex; align-items: center; gap: 0.5rem; color: var(--text);">
-                        <i data-lucide="user" style="width: 16px; height: 16px; flex-shrink: 0;"></i>
-                        <span style="font-weight: 500; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px;">{{ username }}</span>
+                        <i data-lucide="user" style="width: 16px; height: 16px;"></i>
+                        <span style="font-weight: 500; font-size: 0.85rem; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ username }}</span>
                     </div>
-                    <a href="{{ url_for('logout') }}" style="color: var(--danger); display: flex; align-items: center; justify-content: center; text-decoration: none;" title="Logout">
-                        <i data-lucide="log-out" style="width: 16px; height: 16px;"></i>
-                    </a>
+                    <a href="{{ url_for('logout') }}" style="color: var(--danger);" title="Logout"><i data-lucide="log-out" style="width: 16px; height: 16px;"></i></a>
                 </div>
                 {% endif %}
             </div>
         </aside>
 
-        <!-- Main Workspace -->
         <main class="main-content">
             <header>
-                <div>
-                    <h2 id="page-title">Dashboard</h2>
-                </div>
+                <div><h2 id="page-title">Dashboard</h2></div>
                 <div style="display: flex; align-items: center; gap: 1rem;">
-                    <button id="check-replies-btn" class="btn-secondary" style="width: auto; display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.85rem; font-size: 0.85rem;" title="Scan IMAP Inbox for recipient replies">
+                    <button id="check-replies-btn" class="btn-secondary" style="width: auto; display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.85rem; font-size: 0.85rem;">
                         <i data-lucide="inbox" style="width: 16px; height: 16px;"></i> Scan Replies
                     </button>
-                    <button id="theme-toggle-btn" class="btn-secondary" style="width: auto; padding: 0.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: none; border-color: var(--border);">
+                    <button id="theme-toggle-btn" class="btn-secondary" style="width: auto; padding: 0.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
                         <i data-lucide="moon" style="width: 18px; height: 18px;"></i>
                     </button>
                     <div id="app-status-badge" class="badge badge-idle">Idle</div>
                 </div>
             </header>
 
-            <!-- VIEW: DASHBOARD -->
+            <!-- DASHBOARD -->
             <section id="view-dashboard" class="view-pane">
-                <!-- Countdown Alert Box -->
-                <div id="countdown-container" class="countdown-box" style="display: none;">
-                    <p class="stat-label">Next mail in</p>
-                    <div id="countdown-timer" class="countdown-timer">00:00</div>
-                    <p id="next-recipient-hint" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;"></p>
+                <div id="no-sequence-banner" class="card" style="display: none; text-align: center; padding: 2rem;">
+                    <p style="color: var(--text-muted); margin-bottom: 1rem;">No sequences yet. Create one to start outreach.</p>
+                    <button class="btn-primary" style="width: auto;" onclick="switchView('sequences'); showCreateSequence();">Create Sequence</button>
                 </div>
 
-                <!-- Stats Counters Grid -->
-                <div class="stats-grid">
-                    <div class="card stat-card">
-                        <div class="stat-label">Sent</div>
-                        <div id="stat-sent" class="stat-value">0</div>
-                    </div>
-                    <div class="card stat-card">
-                        <div class="stat-label">Opened</div>
-                        <div id="stat-opened" class="stat-value" style="color: var(--success);">0</div>
-                    </div>
-                    <div class="card stat-card">
-                        <div class="stat-label">Clicked</div>
-                        <div id="stat-clicked" class="stat-value" style="color: var(--info);">0</div>
-                    </div>
-                    <div class="card stat-card">
-                        <div class="stat-label">Replied</div>
-                        <div id="stat-replied" class="stat-value" style="color: #8b5cf6;">0</div>
-                    </div>
-                    <div class="card stat-card">
-                        <div class="stat-label">Failed</div>
-                        <div id="stat-failed" class="stat-value" style="color: var(--danger);">0</div>
-                    </div>
-                    <div class="card stat-card">
-                        <div class="stat-label">Remaining</div>
-                        <div id="stat-remaining" class="stat-value">0</div>
-                    </div>
-                </div>
-
-                <!-- Live Progress Card -->
-                <div class="card">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <h2><i data-lucide="bar-chart-3"></i> Live Progress</h2>
-                        <span id="current-task-text" style="font-size: 0.875rem; color: var(--text-muted); font-weight: 500;">Idle</span>
-                    </div>
-                    <div class="progress-bar-bg">
-                        <div id="progress-bar-fill" class="progress-bar-fill"></div>
-                    </div>
-                </div>
-
-                <!-- Recipients List Tabs -->
-                <div class="card">
-                    <div class="tabs">
-                        <div class="tab active" onclick="switchTab('queue')">Queue</div>
-                        <div class="tab" onclick="switchTab('sent')">Sent</div>
-                        <div class="tab" onclick="switchTab('replied')">Replied 💬</div>
-                        <div class="tab" onclick="switchTab('failed')">Failed</div>
-                        <div class="tab" onclick="switchTab('preview-tab')">Preview</div>
+                <div id="dashboard-content">
+                    <div class="stats-grid">
+                        <div class="card stat-card"><div class="stat-label">Sent Today</div><div id="stat-sent" class="stat-value">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">Active</div><div id="stat-active" class="stat-value" style="color: var(--primary);">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">Opened</div><div id="stat-opened" class="stat-value" style="color: var(--success);">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">Clicked</div><div id="stat-clicked" class="stat-value" style="color: var(--info);">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">Replied</div><div id="stat-replied" class="stat-value" style="color: #8b5cf6;">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">Completed</div><div id="stat-completed" class="stat-value">0</div></div>
                     </div>
 
-                    <div id="tab-queue" class="tab-content recipient-list"></div>
-                    <div id="tab-sent" class="tab-content recipient-list" style="display: none;"></div>
-                    <div id="tab-replied" class="tab-content recipient-list" style="display: none;"></div>
-                    <div id="tab-failed" class="tab-content recipient-list" style="display: none;"></div>
-                    <div id="tab-preview-tab" class="tab-content recipient-list" style="display: none;">
-                        <p id="preview-placeholder" style="color: var(--text-muted); font-size: 0.875rem; padding: 1rem;">No preview loaded.</p>
-                        <div id="preview-items"></div>
+                    <div class="card" style="margin-bottom: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h2><i data-lucide="git-branch"></i> <span id="dash-seq-name">Sequence</span></h2>
+                            <span id="dash-seq-status" class="badge badge-idle">draft</span>
+                        </div>
+                        <p id="dash-seq-meta" style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;"></p>
                     </div>
-                </div>
 
-                <!-- Activity Log Terminal -->
-                <div class="card">
-                    <h2><i data-lucide="terminal"></i> Activity Log</h2>
-                    <div id="log-container"></div>
-                </div>
-            </section>
-
-            <!-- VIEW: SETUP -->
-            <section id="view-setup" class="view-pane hidden">
-                <div class="setup-container">
                     <div class="card">
-                        <h2><i data-lucide="settings"></i> Configure Campaign</h2>
-                        <form id="campaign-form" enctype="multipart/form-data">
+                        <div class="tabs">
+                            <div class="tab active" onclick="switchTab('active')">In Progress</div>
+                            <div class="tab" onclick="switchTab('completed')">Completed</div>
+                            <div class="tab" onclick="switchTab('replied')">Replied</div>
+                            <div class="tab" onclick="switchTab('failed')">Failed</div>
+                        </div>
+                        <div id="tab-active" class="tab-content recipient-list"></div>
+                        <div id="tab-completed" class="tab-content recipient-list" style="display:none;"></div>
+                        <div id="tab-replied" class="tab-content recipient-list" style="display:none;"></div>
+                        <div id="tab-failed" class="tab-content recipient-list" style="display:none;"></div>
+                    </div>
 
-                            <div class="grid-2">
-                                <div class="form-group">
-                                    <label>Delay Between Emails (seconds)</label>
-                                    <input name="delay_sec" type="number" min="1" required value="{{ defaults.get('delay_sec', '60') }}" />
-                                </div>
-                                <div class="form-group">
-                                    <label>Daily Limit</label>
-                                    <input name="daily_limit" type="number" min="1" required value="{{ defaults.get('daily_limit', '100') }}" />
-                                </div>
-                            </div>
-                            <div class="grid-2">
-                                <div class="form-group">
-                                    <label>Window Start (HH:MM)</label>
-                                    <input name="window_start" value="{{ defaults.get('window_start', '09:00') }}" required />
-                                </div>
-                                <div class="form-group">
-                                    <label>Window End (HH:MM)</label>
-                                    <input name="window_end" value="{{ defaults.get('window_end', '17:00') }}" required />
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Batch ID</label>
-                                <input name="batch_id" id="batch_id_input" value="{{ defaults.get('batch_id', '') }}" required />
-                            </div>
-                            <div class="form-group">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-                                    <label style="margin-bottom: 0;">Subject Template</label>
-                                    <span style="font-size: 0.72rem; color: var(--primary); background: var(--primary-light); padding: 2px 6px; border-radius: 4px;">Spintax: <code>{Hello|Hi|Hey}</code></span>
-                                </div>
-                                <input name="subject_template" required value="{{ defaults.get('subject_template', '') }}" />
-                            </div>
-                            <div class="form-group">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-                                    <label style="margin-bottom: 0;">Body Template (HTML Supported)</label>
-                                    <span style="font-size: 0.72rem; color: var(--primary); background: var(--primary-light); padding: 2px 6px; border-radius: 4px;">Supports Spintax & <code>{variables}</code></span>
-                                </div>
-                                <div id="editor-container"></div>
-                                <input type="hidden" name="body_template" id="body_template_input" required />
-                                <div id="quill-fallback-content" style="display:none;">{{ defaults.get('body_template', '') | safe }}</div>
-                            </div>
-                            <div class="form-group">
-                                <label>Recipients File (.csv, .xlsx, .xls)</label>
-                                <input name="recipients_csv" type="file" accept=".csv, .xlsx, .xls" required />
-                            </div>
-                            <div class="form-group">
-                                <label>Attachments (Optional)</label>
-                                <input name="attachments" type="file" multiple />
-                            </div>
-                            <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-top: 1rem;">
-                                <input name="consent_required" type="checkbox" style="width: auto; margin: 0;" {% if defaults.get('consent_required', 'on') in ['on', True, 'true'] %}checked{% endif %} />
-                                <label style="margin: 0;">Require <code>consent=true</code> in recipient file</label>
-                            </div>
-
-                            <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-top: 1rem;">
-                                <input id="enable-reply-tracking" name="enable_reply_tracking" type="checkbox" style="width: auto; margin: 0;" {% if defaults.get('enable_reply_tracking', True) %}checked{% endif %} />
-                                <label style="margin: 0; cursor: pointer;" for="enable-reply-tracking"><strong>Auto-Stop on Reply</strong> (Stop sending when recipient replies)</label>
-                            </div>
-
-                            <div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-top: 1rem;">
-                                <input id="enable-followup" name="enable_followup" type="checkbox" style="width: auto; margin: 0;" {% if defaults.get('enable_followup', False) %}checked{% endif %} />
-                                <label style="margin: 0; cursor: pointer;" for="enable-followup">Enable Follow-up Mode (Resend to previously emailed contacts)</label>
-                            </div>
-
-                            <div id="followup-days-group" class="form-group" style="margin-top: 0.75rem; margin-left: 1.5rem; display: none;">
-                                <label style="font-size: 0.875rem; margin-bottom: 0.25rem;">Min days since last email</label>
-                                <input name="followup_days" type="number" min="0" value="{{ defaults.get('followup_days', '3') }}" style="width: 120px;" />
-                            </div>
-                            
-                            <div class="grid-2" style="margin-top: 2rem;">
-                                <button type="button" id="preview-btn" class="btn-secondary"><i data-lucide="eye"></i> Preview (Spintax)</button>
-                                <button type="submit" id="start-btn" class="btn-primary"><i data-lucide="play"></i> Start Campaign</button>
-                            </div>
-                            <button type="button" id="stop-btn" class="btn-danger" style="margin-top: 0.75rem; display: none;"><i data-lucide="square"></i> Stop Campaign</button>
-                        </form>
+                    <div class="card">
+                        <h2><i data-lucide="terminal"></i> Activity Log</h2>
+                        <div id="log-container"></div>
                     </div>
                 </div>
             </section>
 
-            <!-- VIEW: SETTINGS -->
+            <!-- INBOX (outreach activity — sent contacts only) -->
+            <section id="view-inbox" class="view-pane hidden">
+                <div id="inbox-empty" class="card" style="display:none;text-align:center;padding:2rem;">
+                    <p style="color:var(--text-muted);">No sequence activity yet. Launch a sequence to track opens and replies here.</p>
+                </div>
+                <div id="inbox-content">
+                    <div class="card" style="margin-bottom:1rem;">
+                        <p style="font-size:0.85rem;color:var(--text-muted);">Activity for contacts <strong>you emailed</strong> only — not your full Gmail inbox.</p>
+                        <p id="inbox-seq-name" style="font-weight:600;margin-top:0.5rem;"></p>
+                    </div>
+                    <div class="stats-grid inbox-stats">
+                        <div class="card stat-card"><div class="stat-label">Opened</div><div id="inbox-stat-opened" class="stat-value" style="color:var(--success);">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">Not Opened</div><div id="inbox-stat-not-opened" class="stat-value" style="color:var(--warning);">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">Replied</div><div id="inbox-stat-replied" class="stat-value" style="color:#8b5cf6;">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">No Response</div><div id="inbox-stat-no-response" class="stat-value">0</div></div>
+                    </div>
+                    <div class="card">
+                        <div class="tabs">
+                            <div class="tab active" onclick="switchInboxTab('opened')">Opened 👁️</div>
+                            <div class="tab" onclick="switchInboxTab('not_opened')">Not Opened</div>
+                            <div class="tab" onclick="switchInboxTab('replied')">Replied 💬</div>
+                            <div class="tab" onclick="switchInboxTab('no_response')">No Response</div>
+                            <div class="tab" onclick="switchInboxTab('pending')">Not Sent Yet</div>
+                        </div>
+                        <div id="inbox-tab-opened" class="tab-content recipient-list"></div>
+                        <div id="inbox-tab-not_opened" class="tab-content recipient-list" style="display:none;"></div>
+                        <div id="inbox-tab-replied" class="tab-content recipient-list" style="display:none;"></div>
+                        <div id="inbox-tab-no_response" class="tab-content recipient-list" style="display:none;"></div>
+                        <div id="inbox-tab-pending" class="tab-content recipient-list" style="display:none;"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ANALYTICS -->
+            <section id="view-analytics" class="view-pane hidden">
+                <div id="analytics-empty" class="card" style="display:none;text-align:center;padding:2rem;">
+                    <p style="color:var(--text-muted);">No data yet. Launch a sequence to see analytics.</p>
+                </div>
+                <div id="analytics-content">
+                    <p id="analytics-seq-name" style="font-weight:600;margin-bottom:1rem;"></p>
+                    <div class="stats-grid">
+                        <div class="card stat-card"><div class="stat-label">Open Rate</div><div id="an-open-rate" class="stat-value" style="color:var(--success);">0%</div></div>
+                        <div class="card stat-card"><div class="stat-label">Click Rate</div><div id="an-click-rate" class="stat-value" style="color:var(--info);">0%</div></div>
+                        <div class="card stat-card"><div class="stat-label">Reply Rate</div><div id="an-reply-rate" class="stat-value" style="color:#8b5cf6;">0%</div></div>
+                        <div class="card stat-card"><div class="stat-label">Emails Sent</div><div id="an-total-sent" class="stat-value">0</div></div>
+                    </div>
+                    <div class="grid-2" style="gap:1rem;">
+                        <div class="card">
+                            <h2><i data-lucide="filter"></i> Funnel</h2>
+                            <div id="analytics-funnel" class="funnel-chart"></div>
+                        </div>
+                        <div class="card">
+                            <h2><i data-lucide="calendar"></i> Sends (last 14 days)</h2>
+                            <div id="analytics-daily" class="bar-chart"></div>
+                        </div>
+                    </div>
+                    <div class="card" style="margin-top:1rem;">
+                        <h2><i data-lucide="layers"></i> Performance by Step</h2>
+                        <div id="analytics-steps" class="step-analytics-table"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SEQUENCES -->
+            <section id="view-sequences" class="view-pane hidden">
+                <div id="sequences-list-view">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                        <p style="color: var(--text-muted);">Build multi-step email sequences. Upload CSV contacts and the backend handles sending.</p>
+                        <button class="btn-primary" style="width: auto;" onclick="showCreateSequence()"><i data-lucide="plus"></i> New Sequence</button>
+                    </div>
+                    <div id="sequences-grid" class="sequences-grid"></div>
+                </div>
+
+                <div id="sequence-builder-view" class="hidden">
+                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+                        <button class="btn-secondary" style="width: auto;" onclick="hideBuilder()"><i data-lucide="arrow-left"></i> Back</button>
+                        <input id="seq-name-input" type="text" placeholder="Sequence name" style="flex: 1; font-size: 1.1rem; font-weight: 600; border: none; background: transparent; color: var(--text); border-bottom: 2px solid var(--border); padding: 0.25rem 0;" />
+                        <span id="builder-status-badge" class="badge badge-idle">draft</span>
+                    </div>
+
+                    <div class="setup-container" style="max-width: 900px;">
+                        <div class="card">
+                            <h2><i data-lucide="layout-template"></i> Sequence Templates</h2>
+                            <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0.5rem 0 1rem;">
+                                Pick a bundled template (5 emails: Day 0 → 7 → 14 → 21 → 28). Edit subjects, bodies, and delays below, then <strong>Save Template</strong> to keep your changes. Upload CSV with <code>email</code>, <code>first_name</code>, <code>{company}</code>.
+                            </p>
+                            <div class="form-group">
+                                <label>Choose template</label>
+                                <select id="template-picker" onchange="loadApolloTemplate(this.value)">
+                                    <option value="">— Custom sequence (build your own) —</option>
+                                </select>
+                            </div>
+                            <div id="template-actions" class="hidden" style="display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;">
+                                <button type="button" class="btn-secondary" style="width: auto;" onclick="saveTemplateEdits()"><i data-lucide="save"></i> Save Template</button>
+                                <button type="button" class="btn-secondary" style="width: auto;" onclick="resetTemplate()"><i data-lucide="rotate-ccw"></i> Reset to Default</button>
+                            </div>
+                            <p id="template-hint" style="font-size: 0.8rem; color: var(--primary); display: none; margin-top: 0.5rem;"></p>
+                        </div>
+
+                        <div class="card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                                <h2><i data-lucide="mail"></i> Email Steps</h2>
+                                <button type="button" class="btn-secondary" style="width: auto;" onclick="addStep()"><i data-lucide="plus"></i> Add Step</button>
+                            </div>
+                            <div id="steps-container"></div>
+                        </div>
+
+                        <div class="card">
+                            <h2><i data-lucide="sliders"></i> Sending Settings</h2>
+                            <div class="grid-2" style="margin-top: 1rem;">
+                                <div class="form-group"><label>Delay Between Emails (sec)</label><input id="set-delay" type="number" min="1" value="{{ defaults.get('delay_sec', '60') }}" /></div>
+                                <div class="form-group"><label>Daily Limit</label><input id="set-daily-limit" type="number" min="1" value="{{ defaults.get('daily_limit', '100') }}" /></div>
+                            </div>
+                            <div class="grid-2">
+                                <div class="form-group"><label>Working Hours Start (HH:MM)</label><input id="set-window-start" value="{{ defaults.get('window_start', '09:00') }}" /></div>
+                                <div class="form-group"><label>Working Hours End (HH:MM)</label><input id="set-window-end" value="{{ defaults.get('window_end', '17:00') }}" /></div>
+                            </div>
+                            <p style="font-size: 0.78rem; color: var(--text-muted); margin-top: -0.5rem;">Emails only send inside this window each day.</p>
+                            <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                                <input id="set-consent" type="checkbox" style="width: auto;" {% if defaults.get('consent_required', True) %}checked{% endif %} />
+                                <label style="margin: 0;">Require <code>consent=true</code> in CSV</label>
+                            </div>
+                            <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                                <input id="set-reply-tracking" type="checkbox" style="width: auto;" {% if defaults.get('enable_reply_tracking', True) %}checked{% endif %} />
+                                <label style="margin: 0;">Auto-stop on reply</label>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <h2><i data-lucide="users"></i> Contacts (CSV / Excel)</h2>
+                            <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0.5rem 0 1rem;">Required columns: <code>email</code>. Optional: <code>first_name</code>, <code>company</code>, <code>consent</code>, etc.</p>
+                            <input id="seq-csv-input" type="file" accept=".csv,.xlsx,.xls" />
+                        </div>
+
+                        <div class="grid-2">
+                            <button type="button" class="btn-secondary" onclick="saveSequence(false)"><i data-lucide="save"></i> Save Draft</button>
+                            <button type="button" class="btn-secondary" onclick="previewSequence()"><i data-lucide="eye"></i> Preview</button>
+                        </div>
+                        <button type="button" id="launch-btn" class="btn-primary" style="margin-top: 0.75rem;" onclick="launchSequence()"><i data-lucide="rocket"></i> Launch Sequence</button>
+                        <div id="builder-actions-active" class="hidden" style="gap: 0.75rem; margin-top: 0.75rem;">
+                            <button type="button" id="pause-btn" class="btn-danger" style="flex: 1;" onclick="pauseSequence()"><i data-lucide="pause"></i> Pause</button>
+                            <button type="button" id="resume-btn" class="btn-primary hidden" style="flex: 1;" onclick="resumeSequence()"><i data-lucide="play"></i> Resume</button>
+                            <button type="button" class="btn-secondary" style="flex: 1;" onclick="enrollMore()"><i data-lucide="user-plus"></i> Add CSV</button>
+                        </div>
+                        <div id="preview-results" class="card hidden" style="margin-top: 1rem;"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SETTINGS (unchanged structure) -->
             <section id="view-settings" class="view-pane hidden">
                 <div class="setup-container" style="max-width: 600px; margin: 0 auto;">
-                    <!-- User Details Profile Card -->
                     <div class="card" style="margin-bottom: 2rem;">
                         <h2><i data-lucide="user"></i> User Profile</h2>
                         <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1.5rem;">
                             <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem;">
-                                <span style="font-weight: 600; color: var(--text);">Full Name</span>
-                                <span id="profile-full-name" style="color: var(--text-muted);">Loading...</span>
+                                <span style="font-weight: 600;">Full Name</span><span id="profile-full-name" style="color: var(--text-muted);">Loading...</span>
                             </div>
                             <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem;">
-                                <span style="font-weight: 600; color: var(--text);">Phone Number</span>
-                                <span id="profile-phone" style="color: var(--text-muted);">Loading...</span>
+                                <span style="font-weight: 600;">Phone</span><span id="profile-phone" style="color: var(--text-muted);">Loading...</span>
                             </div>
-                            <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem;">
-                                <span style="font-weight: 600; color: var(--text);">Username</span>
-                                <span id="profile-username" style="color: var(--text-muted);">Loading...</span>
+                            <div style="display: flex; justify-content: space-between; padding-bottom: 0.75rem;">
+                                <span style="font-weight: 600;">Username</span><span id="profile-username" style="color: var(--text-muted);">Loading...</span>
                             </div>
                         </div>
                     </div>
-
-                    <!-- SMTP & IMAP Configuration Panel -->
                     <div class="card">
-                        <h2><i data-lucide="mail"></i> Email Credentials (SMTP & IMAP)</h2>
-                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem; margin-top: 0.25rem;">
-                            Used for sending emails (SMTP) and listening for incoming replies (IMAP).
-                        </p>
+                        <h2><i data-lucide="mail"></i> Email Credentials</h2>
                         <form id="settings-form">
+                            <div class="form-group"><label>Sender Gmail</label><input id="settings-smtp-email" name="smtp_email" type="email" required /></div>
                             <div class="form-group">
-                                <label>Sender Gmail / Email</label>
-                                <input id="settings-smtp-email" name="smtp_email" type="email" required placeholder="you@gmail.com" />
+                                <label>Gmail App Password</label>
+                                <input id="settings-smtp-password" name="smtp_app_password" type="password" required />
                             </div>
-                            <div class="form-group">
-                                <label>Gmail App Password (16 characters)</label>
-                                <div class="input-icon-wrapper" style="position: relative;">
-                                    <input id="settings-smtp-password" name="smtp_app_password" type="password" required placeholder="Enter new password or leave as is" style="padding-right: 2.75rem;" />
-                                    <span id="toggle-settings-password" style="position: absolute; right: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); cursor: pointer; display: flex; align-items: center;">
-                                        <i data-lucide="eye" style="width: 18px; height: 18px;"></i>
-                                    </span>
-                                </div>
-                            </div>
-                            
-                            <details style="margin-top: 1rem; border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem 1rem;">
-                                <summary style="font-size: 0.85rem; font-weight: 600; color: var(--text); cursor: pointer;">
-                                    Advanced IMAP Inbox Settings (Auto-Stop on Reply)
-                                </summary>
-                                <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
-                                    <div class="grid-2">
-                                        <div class="form-group">
-                                            <label style="font-size: 0.8rem;">IMAP Host</label>
-                                            <input id="settings-imap-host" name="imap_host" value="imap.gmail.com" />
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 0.8rem;">IMAP Port</label>
-                                            <input id="settings-imap-port" name="imap_port" type="number" value="993" />
-                                        </div>
-                                    </div>
-                                    <p style="font-size: 0.75rem; color: var(--text-muted);">Defaults to your Gmail credentials automatically.</p>
-                                </div>
-                            </details>
-
-                            <button type="submit" class="btn-primary" style="margin-top: 1.25rem; width: 100%;"><i data-lucide="save"></i> Save Credentials</button>
+                            <button type="submit" class="btn-primary" style="margin-top: 1rem; width: 100%;"><i data-lucide="save"></i> Save</button>
                         </form>
-
-                        <!-- Collapsible App Password Help Card -->
-                        <details style="margin-top: 1.5rem; border: 1px solid var(--border); border-radius: 0.75rem; padding: 0.75rem 1rem; background: var(--primary-light);">
-                            <summary style="font-size: 0.875rem; font-weight: 600; color: var(--primary); cursor: pointer; display: flex; align-items: center; gap: 0.5rem; user-select: none;">
-                                <i data-lucide="help-circle" style="width: 18px; height: 18px; flex-shrink: 0;"></i>
-                                How to get a Gmail App Password?
-                            </summary>
-                            <div style="margin-top: 0.75rem; font-size: 0.85rem; color: var(--text); line-height: 1.6; display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid var(--border); padding-top: 0.75rem;">
-                                <p><strong>Step 1:</strong> Turn on <strong>2-Step Verification</strong> on your Google Account settings.</p>
-                                <p><strong>Step 2:</strong> Go to your Google Account's <a href="https://myaccount.google.com/security" target="_blank" style="color: var(--primary); text-decoration: underline; font-weight: 500;">Security Tab</a>.</p>
-                                <p><strong>Step 3:</strong> Search for <strong>"App passwords"</strong> in the search bar or navigate to the Signing in to Google section and click on it.</p>
-                                <p><strong>Step 4:</strong> Enter a custom name (e.g. <em>"Auto Mailer"</em>) and click <strong>Create</strong>.</p>
-                                <p><strong>Step 5:</strong> Copy the generated <strong>16-character password</strong> (displayed in a yellow box) and paste it into the field above.</p>
-                            </div>
-                        </details>
                     </div>
                 </div>
             </section>
@@ -354,369 +296,46 @@
 
     <script>
         lucide.createIcons();
+        const DEFAULT_STEPS = {{ defaults.get('default_steps', '[]') | safe }};
 
-        // Theme Toggler Script
+        let currentSequenceId = null;
+        let currentTemplateId = null;
+        let stepEditors = [];
+        let dashboardSequenceId = null;
+
+        // Theme
         const themeToggleBtn = document.getElementById('theme-toggle-btn');
-        const currentTheme = localStorage.getItem('theme');
-        
-        if (currentTheme === 'dark') {
-            document.body.classList.add('dark-mode');
-            updateThemeIcon(true);
-        } else {
-            updateThemeIcon(false);
-        }
-
+        if (localStorage.getItem('theme') === 'dark') { document.body.classList.add('dark-mode'); updateThemeIcon(true); }
         themeToggleBtn.onclick = () => {
             const isDark = document.body.classList.toggle('dark-mode');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
             updateThemeIcon(isDark);
         };
-
         function updateThemeIcon(isDark) {
-            if (isDark) {
-                themeToggleBtn.innerHTML = '<i data-lucide="sun" style="width: 18px; height: 18px;"></i>';
-            } else {
-                themeToggleBtn.innerHTML = '<i data-lucide="moon" style="width: 18px; height: 18px;"></i>';
-            }
+            themeToggleBtn.innerHTML = isDark ? '<i data-lucide="sun" style="width:18px;height:18px;"></i>' : '<i data-lucide="moon" style="width:18px;height:18px;"></i>';
             lucide.createIcons();
         }
 
-        // Initialize Quill WYSIWYG Editor
-        const quill = new Quill('#editor-container', {
-            theme: 'snow',
-            modules: {
-                toolbar: [
-                    ['bold', 'italic', 'underline', 'strike'],
-                    [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-                    [{ 'color': [] }, { 'background': [] }],
-                    ['link', 'clean']
-                ]
-            }
-        });
-
-        // Load content to editor safely on start
-        const defaultBodyElement = document.getElementById('quill-fallback-content');
-        const defaultBody = defaultBodyElement ? defaultBodyElement.innerHTML : '';
-        quill.root.innerHTML = defaultBody || `<p>Hi {first_name},</p><p>Would love to connect briefly about {company}.</p><p>Thanks,</p><p>{sender_name}</p>`;
-
-        let currentBatchId = "";
-        let isRunning = false;
-        let countdownInterval = null;
-
-        const form = document.getElementById('campaign-form');
-        const startBtn = document.getElementById('start-btn');
-        const stopBtn = document.getElementById('stop-btn');
-        const previewBtn = document.getElementById('preview-btn');
-        const bodyTemplateInput = document.getElementById('body_template_input');
-
-        // Toggle Follow-up fields dynamically
-        const enableFollowupCheckbox = document.getElementById('enable-followup');
-        const followupDaysGroup = document.getElementById('followup-days-group');
-
-        function toggleFollowupFields() {
-            if (enableFollowupCheckbox.checked) {
-                followupDaysGroup.style.display = 'block';
-            } else {
-                followupDaysGroup.style.display = 'none';
-            }
-        }
-        enableFollowupCheckbox.addEventListener('change', toggleFollowupFields);
-        toggleFollowupFields(); // run initially
-
-        // Page View Switcher logic
         function switchView(viewName) {
             document.querySelectorAll('.view-pane').forEach(el => el.classList.add('hidden'));
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-            
             document.getElementById(`view-${viewName}`).classList.remove('hidden');
             document.querySelector(`.nav-item[data-view="${viewName}"]`).classList.add('active');
-            
-            // Set header title
-            const titles = {
-                'dashboard': 'Dashboard',
-                'setup': 'Campaign Setup',
-                'settings': 'Settings'
-            };
+            const titles = { dashboard: 'Dashboard', sequences: 'Sequences', inbox: 'Inbox', analytics: 'Analytics', settings: 'Settings' };
             document.getElementById('page-title').textContent = titles[viewName] || 'Dashboard';
+            if (viewName === 'sequences') loadSequencesList();
+            if (viewName === 'dashboard') refreshDashboard();
+            if (viewName === 'inbox') refreshInbox();
+            if (viewName === 'analytics') refreshAnalytics();
         }
 
-        function syncQuillContent() {
-            bodyTemplateInput.value = quill.root.innerHTML;
-        }
-
-        // Form Submit
-        form.onsubmit = async (e) => {
-            e.preventDefault();
-            syncQuillContent();
-            const formData = new FormData(form);
-            currentBatchId = formData.get('batch_id') || `batch-${Date.now()}`;
-            
-            try {
-                const res = await fetch("/start", { method: 'POST', body: formData });
-                const data = await res.json();
-                if (data.success) {
-                    showToast("Campaign started successfully", "success");
-                    isRunning = true;
-                    updateUIState();
-                    // Auto switch to dashboard view to monitor logs
-                    switchView('dashboard');
-                } else {
-                    showToast(data.error, "error");
-                }
-            } catch (err) {
-                showToast("Failed to start: " + err, "error");
-            }
-        };
-
-        // Stop Campaign
-        stopBtn.onclick = async () => {
-            try {
-                const res = await fetch("/stop", { method: 'POST' });
-                const data = await res.json();
-                if (data.success) {
-                    showToast("Stop signal sent", "warning");
-                } else {
-                    showToast(data.error, "error");
-                }
-            } catch (err) {
-                showToast("Failed to stop: " + err, "error");
-            }
-        };
-
-        // Preview Templates
-        previewBtn.onclick = async () => {
-            syncQuillContent();
-            const formData = new FormData(form);
-            try {
-                const res = await fetch("/preview", { method: 'POST', body: formData });
-                const data = await res.json();
-                if (data.success) {
-                    renderPreview(data.preview);
-                    switchTab('preview-tab');
-                    switchView('dashboard'); // show in preview tab of dashboard
-                } else {
-                    showToast(data.error, "error");
-                }
-            } catch (err) {
-                showToast("Preview failed: " + err, "error");
-            }
-        };
-
-        function renderPreview(items) {
-            const container = document.getElementById('preview-items');
-            document.getElementById('preview-placeholder').style.display = 'none';
-            container.innerHTML = items.map(item => `
-                <div class="recipient-item" style="flex-direction: column; align-items: flex-start; gap: 0.5rem;">
-                    <div><strong>To:</strong> ${item.to}</div>
-                    <div><strong>Subject:</strong> ${item.subject}</div>
-                    <div style="width: 100%; padding: 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; overflow-x: auto;">${item.body}</div>
-                </div>
-            `).join('');
-        }
-
-        async function refreshStatus() {
-            try {
-                const res = await fetch("/status");
-                const data = await res.json();
-                
-                const wasRunning = isRunning;
-                isRunning = data.running;
-                updateUIState();
-
-                // Update Status Badge
-                const badge = document.getElementById('app-status-badge');
-                badge.className = `badge badge-${data.status || 'idle'}`;
-                badge.textContent = data.status || 'Idle';
-
-                // Update Stats
-                document.getElementById('stat-sent').textContent = data.sent_count || 0;
-                document.getElementById('stat-failed').textContent = data.failed_count || 0;
-                document.getElementById('stat-opened').textContent = data.opened_count || 0;
-                document.getElementById('stat-clicked').textContent = data.clicked_count || 0;
-                if (document.getElementById('stat-replied')) {
-                    document.getElementById('stat-replied').textContent = data.replied_count || 0;
-                }
-                document.getElementById('stat-remaining').textContent = Math.max(0, (data.total_to_send || 0) - (data.sent_count || 0) - (data.failed_count || 0) - (data.skipped_count || 0));
-                
-                const pct = data.total_to_send > 0 ? Math.round(((data.sent_count + data.failed_count + data.skipped_count) / data.total_to_send) * 100) : 0;
-                if (document.getElementById('stat-progress-pct')) {
-                    document.getElementById('stat-progress-pct').textContent = `${pct}%`;
-                }
-                document.getElementById('progress-bar-fill').style.width = `${pct}%`;
-
-                // Current Task Status
-                const taskText = document.getElementById('current-task-text');
-                if (data.status === 'running') {
-                    taskText.textContent = `Sending to: ${data.current_recipient || '...'}`;
-                } else if (data.status === 'sleeping') {
-                    taskText.textContent = `Delaying until ${new Date(data.next_send_at).toLocaleTimeString()}`;
-                } else {
-                    taskText.textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
-                }
-
-                // Sleep Countdown
-                if (data.next_send_at) {
-                    startCountdown(data.next_send_at);
-                    document.getElementById('next-recipient-hint').textContent = data.current_recipient ? `Next up: ${data.current_recipient}` : "";
-                } else {
-                    document.getElementById('countdown-container').style.display = 'none';
-                }
-
-                // Logs Terminal
-                const logContainer = document.getElementById('log-container');
-                logContainer.innerHTML = (data.logs || []).map(line => `<div class="log-line">${line}</div>`).join('');
-                logContainer.scrollTop = logContainer.scrollHeight;
-
-                // Load recipient lists dynamically
-                if (data.last_config && data.last_config.batch_id) {
-                    const batchChanged = (currentBatchId !== data.last_config.batch_id);
-                    currentBatchId = data.last_config.batch_id;
-                    const transitionToStopped = (wasRunning && !data.running);
-                    if (data.running || batchChanged || transitionToStopped) {
-                        refreshRecipients();
-                    }
-                }
-
-            } catch (err) {
-                console.error("Status refresh failed", err);
-            }
-        }
-
-        async function refreshRecipients() {
-            if (!currentBatchId) return;
-            try {
-                const res = await fetch(`/recipients?batch_id=${currentBatchId}`);
-                const data = await res.json();
-                if (data.success) {
-                    renderRecipientLists(data.recipients);
-                }
-            } catch (err) {
-                console.error("Recipients refresh failed", err);
-            }
-        }
-
-        function renderRecipientLists(recipients) {
-            const queueList = document.getElementById('tab-queue');
-            const sentList = document.getElementById('tab-sent');
-            const repliedList = document.getElementById('tab-replied');
-            const failedList = document.getElementById('tab-failed');
-
-            const queueHtml = recipients.filter(r => r.status === 'pending' && !r.replied).map(r => `
-                <div class="recipient-item">
-                    <span><span class="status-dot dot-pending"></span>${r.email}</span>
-                    <span style="color: var(--text-muted);">Waiting</span>
-                </div>
-            `).join('');
-
-            const sentHtml = recipients.filter(r => r.status === 'sent' && !r.replied).map(r => {
-                let badges = "";
-                if (r.opened) {
-                    badges += ' <span class="badge badge-opened" style="background:rgba(16,185,129,0.08); color:var(--success); border:1px solid rgba(16,185,129,0.15); font-size:0.7rem; padding:2px 6px; margin-left:5px; text-transform:none;">Opened 👁️</span>';
-                }
-                if (r.clicked > 0) {
-                    badges += ` <span class="badge badge-clicked" style="background:rgba(59,130,246,0.08); color:var(--info); border:1px solid rgba(59,130,246,0.15); font-size:0.7rem; padding:2px 6px; margin-left:5px; text-transform:none;">Clicked (${r.clicked}) 🖱️</span>`;
-                }
-                return `
-                    <div class="recipient-item">
-                        <span><span class="status-dot dot-sent"></span>${r.email}${badges}</span>
-                        <span style="color: var(--success);">${r.sent_at ? new Date(r.sent_at).toLocaleTimeString() : 'Sent'}</span>
-                    </div>
-                `;
-            }).join('');
-
-            const repliedHtml = recipients.filter(r => r.replied || r.status === 'replied').map(r => `
-                <div class="recipient-item" style="border-left: 3px solid #8b5cf6;">
-                    <span><span class="status-dot" style="background: #8b5cf6;"></span>${r.email} <span class="badge" style="background:rgba(139,92,246,0.1); color:#8b5cf6; border:1px solid rgba(139,92,246,0.2); font-size:0.7rem; padding:2px 6px; margin-left:5px; text-transform:none;">Replied 💬</span></span>
-                    <span style="color: #8b5cf6; font-weight: 500;">Sequence Paused</span>
-                </div>
-            `).join('');
-
-            const failedHtml = recipients.filter(r => r.status === 'failed').map(r => `
-                <div class="recipient-item" title="${r.error || ''}">
-                    <span><span class="status-dot dot-failed"></span>${r.email}</span>
-                    <span style="color: var(--danger);">Failed</span>
-                </div>
-            `).join('');
-
-            queueList.innerHTML = queueHtml || '<p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">Empty</p>';
-            sentList.innerHTML = sentHtml || '<p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">None yet</p>';
-            if (repliedList) {
-                repliedList.innerHTML = repliedHtml || '<p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">No replies detected yet</p>';
-            }
-            failedList.innerHTML = failedHtml || '<p style="padding:1rem; color:var(--text-muted); font-size:0.875rem;">None yet</p>';
-        }
-
-        // Scan replies button action
-        const checkRepliesBtn = document.getElementById('check-replies-btn');
-        if (checkRepliesBtn) {
-            checkRepliesBtn.onclick = async () => {
-                checkRepliesBtn.disabled = true;
-                const originalHtml = checkRepliesBtn.innerHTML;
-                checkRepliesBtn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:16px; height:16px;"></i> Scanning...';
-                lucide.createIcons();
-                try {
-                    const res = await fetch("/check-replies", { method: 'POST' });
-                    const data = await res.json();
-                    if (data.status === 'ok') {
-                        showToast(data.message || `Scan completed! Found ${data.replied_count} replies.`, "success");
-                        refreshStatus();
-                        refreshRecipients();
-                    } else {
-                        showToast(data.message || "Failed to scan inbox replies.", "error");
-                    }
-                } catch (err) {
-                    showToast("Error checking replies: " + err, "error");
-                } finally {
-                    checkRepliesBtn.disabled = false;
-                    checkRepliesBtn.innerHTML = originalHtml;
-                    lucide.createIcons();
-                }
-            };
-        }
-
-        function startCountdown(targetIso) {
-            const container = document.getElementById('countdown-container');
-            const timer = document.getElementById('countdown-timer');
-            container.style.display = 'block';
-
-            if (countdownInterval) clearInterval(countdownInterval);
-
-            const target = new Date(targetIso).getTime();
-            
-            function update() {
-                const now = new Date().getTime();
-                const diff = target - now;
-                if (diff <= 0) {
-                    timer.textContent = "00:00";
-                    clearInterval(countdownInterval);
-                    return;
-                }
-                const hours = Math.floor(diff / (1000 * 60 * 60));
-                const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                const secs = Math.floor((diff % (1000 * 60)) / 1000);
-                
-                if (hours > 0) {
-                    timer.textContent = `${hours}h ${mins.toString().padStart(2, '0')}m`;
-                } else {
-                    timer.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                }
-            }
-            update();
-            countdownInterval = setInterval(update, 1000);
-        }
-
-        function updateUIState() {
-            if (isRunning) {
-                startBtn.style.display = 'none';
-                stopBtn.style.display = 'block';
-                previewBtn.disabled = true;
-                form.querySelectorAll('input:not([type="hidden"]), textarea, select').forEach(el => el.disabled = true);
-            } else {
-                startBtn.style.display = 'block';
-                stopBtn.style.display = 'none';
-                previewBtn.disabled = false;
-                form.querySelectorAll('input, textarea, select').forEach(el => el.disabled = false);
-            }
+        function switchInboxTab(tabId) {
+            document.querySelectorAll('#view-inbox .tab-content').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('#view-inbox .tab').forEach(el => el.classList.remove('active'));
+            const target = document.getElementById(`inbox-tab-${tabId}`);
+            if (target) target.style.display = 'block';
+            const tabBtn = document.querySelector(`#view-inbox .tab[onclick="switchInboxTab('${tabId}')"]`);
+            if (tabBtn) tabBtn.classList.add('active');
         }
 
         function switchTab(tabId) {
@@ -730,92 +349,593 @@
 
         function showToast(msg, type = 'info') {
             const container = document.getElementById('toast-container');
-            if (!container) return;
-            
             const toast = document.createElement('div');
             toast.className = `toast toast-${type}`;
-            
-            let icon = 'info';
-            if (type === 'success') icon = 'check-circle';
-            if (type === 'error') icon = 'alert-triangle';
-            if (type === 'warning') icon = 'alert-circle';
-            
-            toast.innerHTML = `
-                <i data-lucide="${icon}"></i>
-                <div style="flex: 1; font-size: 0.875rem; font-weight: 600;">${msg}</div>
-            `;
+            const icons = { success: 'check-circle', error: 'alert-triangle', warning: 'alert-circle', info: 'info' };
+            toast.innerHTML = `<i data-lucide="${icons[type] || 'info'}"></i><div style="flex:1;font-size:0.875rem;font-weight:600;">${msg}</div>`;
             container.appendChild(toast);
             lucide.createIcons();
-            
-            setTimeout(() => {
-                toast.style.animation = 'slideOutRight 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards';
-                setTimeout(() => toast.remove(), 350);
-            }, 4000);
+            setTimeout(() => { toast.style.animation = 'slideOutRight 0.35s forwards'; setTimeout(() => toast.remove(), 350); }, 4000);
         }
 
-        setInterval(refreshStatus, 3000);
-        refreshStatus();
+        // --- Step builder ---
+        let dragSrcIndex = null;
 
-        // Fetch User Settings
+        function getStepVariants(step) {
+            if (step.subject_variants && step.subject_variants.length) return step.subject_variants;
+            if (step.subject) return [step.subject];
+            return [''];
+        }
+
+        function variantsHtml(step) {
+            const variants = getStepVariants(step);
+            const rows = variants.map((v, vi) => `
+                <div class="variant-row">
+                    <span class="variant-label">${String.fromCharCode(65 + vi)}</span>
+                    <input class="subject-variant" value="${escapeAttr(v)}" placeholder="Subject variant ${String.fromCharCode(65 + vi)}" />
+                    ${vi > 0 ? `<button type="button" class="btn-icon btn-icon-sm" onclick="removeVariant(this)" title="Remove variant"><i data-lucide="x"></i></button>` : ''}
+                </div>`).join('');
+            return `<div class="subject-variants">${rows}<button type="button" class="btn-link add-variant-btn" onclick="addVariant(this)">+ Add A/B variant</button></div>`;
+        }
+
+        function createStepElement(step, index) {
+            const div = document.createElement('div');
+            div.className = 'sequence-step-card';
+            div.dataset.index = index;
+            div.draggable = true;
+            div.innerHTML = `
+                <div class="step-header">
+                    <button type="button" class="drag-handle" title="Drag to reorder"><i data-lucide="grip-vertical"></i></button>
+                    <span class="step-number">Step ${index + 1}</span>
+                    ${index > 0 ? `<div class="step-delay-group">
+                        <label>Wait after previous step</label>
+                        <div class="step-delay-inputs">
+                            <input type="number" class="step-delay-days" min="0" value="${step.delay_days ?? 7}" /> <span>days</span>
+                            <input type="number" class="step-delay-hours" min="0" max="23" value="${step.delay_hours ?? 0}" /> <span>hours</span>
+                        </div>
+                    </div>` : '<span class="step-delay-label">Sends immediately on launch</span>'}
+                    ${index > 0 ? `<button type="button" class="btn-icon" onclick="removeStep(${index})" title="Remove step"><i data-lucide="trash-2"></i></button>` : ''}
+                </div>
+                <div class="form-group"><label>Subject (A/B variants — one picked per contact)</label>${variantsHtml(step)}</div>
+                <div class="form-group"><label>Body</label><div class="step-editor" id="step-editor-${index}"></div></div>
+            `;
+            div.addEventListener('dragstart', onDragStart);
+            div.addEventListener('dragover', onDragOver);
+            div.addEventListener('drop', onDrop);
+            div.addEventListener('dragend', onDragEnd);
+            return div;
+        }
+
+        function onDragStart(e) {
+            dragSrcIndex = parseInt(e.currentTarget.dataset.index, 10);
+            e.currentTarget.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+        function onDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+        function onDrop(e) {
+            e.preventDefault();
+            const tgtIndex = parseInt(e.currentTarget.dataset.index, 10);
+            if (dragSrcIndex === null || dragSrcIndex === tgtIndex) return;
+            const steps = getStepsFromUI();
+            const [moved] = steps.splice(dragSrcIndex, 1);
+            steps.splice(tgtIndex, 0, moved);
+            renderSteps(steps);
+        }
+        function onDragEnd(e) { e.currentTarget.classList.remove('dragging'); dragSrcIndex = null; }
+
+        function addVariant(btn) {
+            const container = btn.closest('.subject-variants');
+            const count = container.querySelectorAll('.variant-row').length;
+            const label = String.fromCharCode(65 + count);
+            const row = document.createElement('div');
+            row.className = 'variant-row';
+            row.innerHTML = `<span class="variant-label">${label}</span><input class="subject-variant" placeholder="Subject variant ${label}" /><button type="button" class="btn-icon btn-icon-sm" onclick="removeVariant(this)"><i data-lucide="x"></i></button>`;
+            btn.before(row);
+            lucide.createIcons();
+        }
+        function removeVariant(btn) { btn.closest('.variant-row').remove(); }
+
+        function escapeAttr(s) { return String(s).replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+        function renderSteps(steps) {
+            const container = document.getElementById('steps-container');
+            container.innerHTML = '';
+            stepEditors = [];
+            steps.forEach((step, i) => {
+                container.appendChild(createStepElement(step, i));
+                const quill = new Quill(`#step-editor-${i}`, {
+                    theme: 'snow',
+                    modules: { toolbar: [['bold','italic','underline'], [{'list':'ordered'},{'list':'bullet'}], ['link','clean']] }
+                });
+                quill.root.innerHTML = step.body || '<p>Hi {first_name},</p>';
+                stepEditors.push(quill);
+            });
+            lucide.createIcons();
+        }
+
+        function getStepsFromUI() {
+            const cards = document.querySelectorAll('.sequence-step-card');
+            return Array.from(cards).map((card, i) => {
+                const variants = Array.from(card.querySelectorAll('.subject-variant')).map(inp => inp.value.trim()).filter(Boolean);
+                return {
+                    subject: variants[0] || '',
+                    subject_variants: variants,
+                    body: stepEditors[i] ? stepEditors[i].root.innerHTML : '',
+                    delay_days: i === 0 ? 0 : parseInt(card.querySelector('.step-delay-days')?.value || '7', 10),
+                    delay_hours: i === 0 ? 0 : parseInt(card.querySelector('.step-delay-hours')?.value || '0', 10),
+                };
+            });
+        }
+
+        function getSettingsFromUI() {
+            return {
+                daily_limit: parseInt(document.getElementById('set-daily-limit').value, 10),
+                delay_sec: parseInt(document.getElementById('set-delay').value, 10),
+                window_start: document.getElementById('set-window-start').value,
+                window_end: document.getElementById('set-window-end').value,
+                consent_required: document.getElementById('set-consent').checked,
+                enable_reply_tracking: document.getElementById('set-reply-tracking').checked,
+            };
+        }
+
+        function addStep() {
+            const steps = getStepsFromUI();
+            steps.push({
+                subject: 'Following up - {first_name}',
+                subject_variants: ['Following up - {first_name}', 'Quick bump for {first_name}'],
+                body: '<p>Hi {first_name},</p><p>Just checking in.</p>',
+                delay_days: 3,
+            });
+            renderSteps(steps);
+        }
+
+        function removeStep(index) {
+            const steps = getStepsFromUI();
+            steps.splice(index, 1);
+            renderSteps(steps);
+        }
+
+        async function loadTemplateOptions() {
+            try {
+                const res = await fetch('/api/templates');
+                const data = await res.json();
+                const sel = document.getElementById('template-picker');
+                sel.innerHTML = '<option value="">— Custom sequence (build your own) —</option>';
+                (data.templates || []).forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.id;
+                    opt.textContent = `${t.name}${t.customized ? ' (edited)' : ''} (${t.step_count} emails · ${t.delay_hint || 'scheduled'})`;
+                    sel.appendChild(opt);
+                });
+            } catch (e) { console.error('Failed to load templates', e); }
+        }
+
+        async function loadApolloTemplate(id) {
+            currentTemplateId = id || null;
+            const actions = document.getElementById('template-actions');
+            if (!id) {
+                actions.classList.add('hidden');
+                document.getElementById('template-hint').style.display = 'none';
+                return;
+            }
+            actions.classList.remove('hidden');
+            actions.style.display = 'flex';
+            try {
+                const res = await fetch(`/api/templates/${id}`);
+                const data = await res.json();
+                if (!data.success) { showToast(data.error, 'error'); return; }
+                const tpl = data.template;
+                document.getElementById('seq-name-input').value = tpl.name;
+                document.getElementById('set-daily-limit').value = tpl.settings.daily_limit;
+                document.getElementById('set-delay').value = tpl.settings.delay_sec;
+                document.getElementById('set-window-start').value = tpl.settings.window_start;
+                document.getElementById('set-window-end').value = tpl.settings.window_end;
+                document.getElementById('set-consent').checked = tpl.settings.consent_required;
+                document.getElementById('set-reply-tracking').checked = tpl.settings.enable_reply_tracking;
+                renderSteps(tpl.steps);
+                const hint = document.getElementById('template-hint');
+                hint.style.display = 'block';
+                const src = tpl.source === 'customized' ? 'Your saved edits' : 'Default template';
+                hint.textContent = `Loaded: ${tpl.step_count} emails · ${tpl.delay_hint || 'see step delays'} · ${src}`;
+                showToast(`Template "${tpl.name}" loaded — edit below and save`, 'success');
+            } catch (e) { showToast('Failed to load template', 'error'); }
+        }
+
+        async function saveTemplateEdits() {
+            if (!currentTemplateId) { showToast('Select a template first', 'error'); return; }
+            const payload = {
+                name: document.getElementById('seq-name-input').value,
+                steps: getStepsFromUI(),
+                settings: getSettingsFromUI(),
+            };
+            try {
+                const res = await fetch(`/api/templates/${currentTemplateId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(data.message || 'Template saved', 'success');
+                    loadTemplateOptions();
+                    document.getElementById('template-picker').value = currentTemplateId;
+                } else showToast(data.error, 'error');
+            } catch (e) { showToast('Save template failed', 'error'); }
+        }
+
+        async function resetTemplate() {
+            if (!currentTemplateId) return;
+            if (!confirm('Reset this template to the original default? Your edits will be lost.')) return;
+            try {
+                const res = await fetch(`/api/templates/${currentTemplateId}/reset`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(data.message, 'success');
+                    loadApolloTemplate(currentTemplateId);
+                    loadTemplateOptions();
+                } else showToast(data.error, 'error');
+            } catch (e) { showToast('Reset failed', 'error'); }
+        }
+
+        function showCreateSequence() {
+            currentSequenceId = null;
+            document.getElementById('sequences-list-view').classList.add('hidden');
+            document.getElementById('sequence-builder-view').classList.remove('hidden');
+            document.getElementById('seq-name-input').value = 'New Sequence';
+            document.getElementById('builder-status-badge').textContent = 'draft';
+            document.getElementById('builder-status-badge').className = 'badge badge-idle';
+            document.getElementById('builder-actions-active').classList.add('hidden');
+            document.getElementById('launch-btn').classList.remove('hidden');
+            document.getElementById('seq-csv-input').value = '';
+            document.getElementById('template-picker').value = '';
+            document.getElementById('template-hint').style.display = 'none';
+            document.getElementById('template-actions').classList.add('hidden');
+            currentTemplateId = null;
+            loadTemplateOptions();
+            renderSteps(DEFAULT_STEPS.length ? DEFAULT_STEPS : [{ subject: '', body: '<p>Hi {first_name},</p>', delay_days: 0, delay_hours: 0 }]);
+        }
+
+        function hideBuilder() {
+            document.getElementById('sequence-builder-view').classList.add('hidden');
+            document.getElementById('sequences-list-view').classList.remove('hidden');
+            loadSequencesList();
+        }
+
+        async function openSequence(id) {
+            const res = await fetch(`/api/sequences/${id}`);
+            const data = await res.json();
+            if (!data.success) { showToast(data.error, 'error'); return; }
+            const seq = data.sequence;
+            currentSequenceId = seq.id;
+            document.getElementById('sequences-list-view').classList.add('hidden');
+            document.getElementById('sequence-builder-view').classList.remove('hidden');
+            document.getElementById('seq-name-input').value = seq.name;
+            document.getElementById('builder-status-badge').textContent = seq.status;
+            document.getElementById('builder-status-badge').className = `badge badge-${seq.status === 'active' ? 'running' : 'idle'}`;
+            document.getElementById('set-daily-limit').value = seq.settings.daily_limit;
+            document.getElementById('set-delay').value = seq.settings.delay_sec;
+            document.getElementById('set-window-start').value = seq.settings.window_start;
+            document.getElementById('set-window-end').value = seq.settings.window_end;
+            document.getElementById('set-consent').checked = seq.settings.consent_required;
+            document.getElementById('set-reply-tracking').checked = seq.settings.enable_reply_tracking;
+            renderSteps(seq.steps);
+            const isActive = seq.status === 'active';
+            const isPaused = seq.status === 'paused';
+            document.getElementById('builder-actions-active').classList.toggle('hidden', seq.status === 'draft');
+            if (seq.status !== 'draft') {
+                document.getElementById('builder-actions-active').style.display = 'flex';
+            }
+            document.getElementById('launch-btn').classList.toggle('hidden', isActive || isPaused);
+            document.getElementById('pause-btn').classList.toggle('hidden', !isActive);
+            document.getElementById('resume-btn').classList.toggle('hidden', !isPaused);
+        }
+
+        async function saveSequence(showMsg = true) {
+            const payload = { name: document.getElementById('seq-name-input').value, steps: getStepsFromUI(), settings: getSettingsFromUI() };
+            try {
+                let res;
+                if (currentSequenceId) {
+                    res = await fetch(`/api/sequences/${currentSequenceId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                } else {
+                    res = await fetch('/api/sequences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                }
+                const data = await res.json();
+                if (data.success) {
+                    currentSequenceId = data.sequence.id;
+                    if (showMsg) showToast('Sequence saved', 'success');
+                    return true;
+                }
+                showToast(data.error, 'error');
+                return false;
+            } catch (e) { showToast('Save failed: ' + e, 'error'); return false; }
+        }
+
+        async function launchSequence() {
+            if (!await saveSequence(false)) return;
+            const csv = document.getElementById('seq-csv-input').files[0];
+            if (!csv) { showToast('Upload a CSV file with contacts first', 'error'); return; }
+            const fd = new FormData();
+            fd.append('recipients_csv', csv);
+            try {
+                const res = await fetch(`/api/sequences/${currentSequenceId}/activate`, { method: 'POST', body: fd });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(`Launched! ${data.enrolled} contacts enrolled. Backend will send automatically.`, 'success');
+                    dashboardSequenceId = currentSequenceId;
+                    openSequence(currentSequenceId);
+                    switchView('dashboard');
+                } else showToast(data.error, 'error');
+            } catch (e) { showToast('Launch failed: ' + e, 'error'); }
+        }
+
+        async function pauseSequence() {
+            const res = await fetch(`/api/sequences/${currentSequenceId}/pause`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) { showToast('Sequence paused', 'warning'); openSequence(currentSequenceId); }
+            else showToast(data.error, 'error');
+        }
+
+        async function resumeSequence() {
+            const res = await fetch(`/api/sequences/${currentSequenceId}/resume`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) { showToast('Sequence resumed — backend worker will continue sending', 'success'); openSequence(currentSequenceId); }
+            else showToast(data.error, 'error');
+        }
+
+        async function enrollMore() {
+            const csv = document.getElementById('seq-csv-input').files[0];
+            if (!csv) { showToast('Select a CSV file first', 'error'); return; }
+            const fd = new FormData();
+            fd.append('recipients_csv', csv);
+            const res = await fetch(`/api/sequences/${currentSequenceId}/enroll`, { method: 'POST', body: fd });
+            const data = await res.json();
+            if (data.success) showToast(`Added ${data.enrolled} contacts`, 'success');
+            else showToast(data.error, 'error');
+        }
+
+        async function previewSequence() {
+            if (!await saveSequence(false)) return;
+            const csv = document.getElementById('seq-csv-input').files[0];
+            if (!csv) { showToast('Upload CSV to preview', 'error'); return; }
+            const fd = new FormData();
+            fd.append('recipients_csv', csv);
+            const res = await fetch(`/api/sequences/${currentSequenceId}/preview`, { method: 'POST', body: fd });
+            const data = await res.json();
+            if (!data.success) { showToast(data.error, 'error'); return; }
+            const box = document.getElementById('preview-results');
+            box.classList.remove('hidden');
+            box.innerHTML = '<h2>Preview</h2>' + data.preview.map(p => `
+                <div class="recipient-item" style="flex-direction:column;align-items:flex-start;gap:0.5rem;">
+                    <div><strong>Step ${p.step} → ${p.to}</strong></div>
+                    <div><strong>Subject:</strong> ${p.subject} <span style="font-size:0.75rem;color:var(--text-muted);">(variant: ${escapeAttr(p.subject_variant || '')})</span></div>
+                    <div style="width:100%;padding:0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">${p.body}</div>
+                </div>`).join('');
+        }
+
+        async function loadSequencesList() {
+            const res = await fetch('/api/sequences');
+            const data = await res.json();
+            const grid = document.getElementById('sequences-grid');
+            if (!data.sequences.length) {
+                grid.innerHTML = '<div class="card" style="text-align:center;padding:2rem;color:var(--text-muted);">No sequences yet. Click "New Sequence" to start.</div>';
+                return;
+            }
+            grid.innerHTML = data.sequences.map(s => `
+                <div class="card sequence-card" onclick="openSequence('${s.id}')">
+                    <div style="display:flex;justify-content:space-between;align-items:start;">
+                        <h3 style="font-size:1rem;">${s.name}</h3>
+                        <span class="badge badge-${s.status === 'active' ? 'running' : 'idle'}">${s.status}</span>
+                    </div>
+                    <p style="font-size:0.8rem;color:var(--text-muted);margin:0.5rem 0;">${s.steps.length} step(s) · ${s.stats?.enrolled || 0} enrolled</p>
+                    <p style="font-size:0.75rem;color:var(--text-muted);">Created ${s.created_at ? new Date(s.created_at).toLocaleDateString() : ''}</p>
+                </div>`).join('');
+        }
+
+        function inboxContactRow(c) {
+            let badges = '';
+            if (c.opened) badges += '<span class="mini-badge mini-open">Opened</span>';
+            if (c.clicked > 0) badges += `<span class="mini-badge mini-click">Clicked ${c.clicked}</span>`;
+            if (c.replied) badges += '<span class="mini-badge mini-reply">Replied</span>';
+            if (c.emails_sent > 0 && !c.opened) badges += '<span class="mini-badge mini-no-open">Not opened</span>';
+            const meta = c.emails_sent > 0
+                ? `Sent ${c.emails_sent} · Step ${c.last_step_sent || c.current_step}${c.last_sent_at ? ' · ' + new Date(c.last_sent_at).toLocaleString() : ''}`
+                : (c.next_send_at ? 'Scheduled · ' + new Date(c.next_send_at).toLocaleString() : 'Waiting to send');
+            return `<div class="recipient-item">
+                <span><span class="status-dot"></span>${c.email} ${badges}</span>
+                <span style="color:var(--text-muted);font-size:0.8rem;">${meta}</span>
+            </div>`;
+        }
+
+        async function refreshInbox() {
+            const url = dashboardSequenceId ? `/api/sequences/${dashboardSequenceId}/inbox` : '/api/inbox';
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (!data.success || !data.sequence) {
+                    document.getElementById('inbox-empty').style.display = 'block';
+                    document.getElementById('inbox-content').style.display = 'none';
+                    return;
+                }
+                document.getElementById('inbox-empty').style.display = 'none';
+                document.getElementById('inbox-content').style.display = 'block';
+                dashboardSequenceId = data.sequence.id;
+                document.getElementById('inbox-seq-name').textContent = data.sequence.name;
+
+                const g = data.groups || {};
+                document.getElementById('inbox-stat-opened').textContent = g.opened || 0;
+                document.getElementById('inbox-stat-not-opened').textContent = g.not_opened || 0;
+                document.getElementById('inbox-stat-replied').textContent = g.replied || 0;
+                document.getElementById('inbox-stat-no-response').textContent = g.no_response || 0;
+
+                const badge = document.getElementById('inbox-badge');
+                if (g.replied > 0) {
+                    badge.textContent = g.replied;
+                    badge.classList.remove('hidden');
+                } else badge.classList.add('hidden');
+
+                const lists = data.group_lists || {};
+                const empty = '<p style="padding:1rem;color:var(--text-muted);">None in this category</p>';
+                document.getElementById('inbox-tab-opened').innerHTML = (lists.opened || []).map(inboxContactRow).join('') || empty;
+                document.getElementById('inbox-tab-not_opened').innerHTML = (lists.not_opened || []).map(inboxContactRow).join('') || empty;
+                document.getElementById('inbox-tab-replied').innerHTML = (lists.replied || []).map(inboxContactRow).join('') || empty;
+                document.getElementById('inbox-tab-no_response').innerHTML = (lists.no_response || []).map(inboxContactRow).join('') || empty;
+                document.getElementById('inbox-tab-pending').innerHTML = (lists.pending || []).map(inboxContactRow).join('') || empty;
+            } catch (e) { console.error('Inbox refresh failed', e); }
+        }
+
+        async function refreshAnalytics() {
+            const url = dashboardSequenceId ? `/api/sequences/${dashboardSequenceId}/analytics` : '/api/analytics';
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (!data.success || !data.sequence) {
+                    document.getElementById('analytics-empty').style.display = 'block';
+                    document.getElementById('analytics-content').style.display = 'none';
+                    return;
+                }
+                document.getElementById('analytics-empty').style.display = 'none';
+                document.getElementById('analytics-content').style.display = 'block';
+                dashboardSequenceId = data.sequence.id;
+                document.getElementById('analytics-seq-name').textContent = data.sequence.name;
+
+                const s = data.summary || {};
+                document.getElementById('an-open-rate').textContent = (s.open_rate || 0) + '%';
+                document.getElementById('an-click-rate').textContent = (s.click_rate || 0) + '%';
+                document.getElementById('an-reply-rate').textContent = (s.reply_rate || 0) + '%';
+                document.getElementById('an-total-sent').textContent = s.total_emails_sent || 0;
+
+                const funnel = document.getElementById('analytics-funnel');
+                const maxF = Math.max(...(data.funnel || []).map(f => f.count), 1);
+                funnel.innerHTML = (data.funnel || []).map(f => `
+                    <div class="funnel-row">
+                        <span class="funnel-label">${f.label}</span>
+                        <div class="funnel-bar-bg"><div class="funnel-bar-fill" style="width:${Math.round(f.count/maxF*100)}%"></div></div>
+                        <span class="funnel-count">${f.count}</span>
+                    </div>`).join('');
+
+                const daily = document.getElementById('analytics-daily');
+                const days = data.daily || [];
+                const maxD = Math.max(...days.map(d => d.sent), 1);
+                daily.innerHTML = days.length ? days.map(d => `
+                    <div class="bar-row">
+                        <span class="bar-label">${d.day.slice(5)}</span>
+                        <div class="bar-bg"><div class="bar-fill" style="width:${Math.round(d.sent/maxD*100)}%"></div></div>
+                        <span class="bar-count">${d.sent}</span>
+                    </div>`).join('') : '<p style="color:var(--text-muted);padding:1rem;">No sends yet</p>';
+
+                const steps = document.getElementById('analytics-steps');
+                steps.innerHTML = (data.steps || []).length ? `<table class="analytics-table">
+                    <thead><tr><th>Step</th><th>Sent</th><th>Opened</th><th>Open %</th><th>Clicked</th><th>Click %</th></tr></thead>
+                    <tbody>${(data.steps || []).map(st => `
+                        <tr><td>Step ${st.step}</td><td>${st.sent}</td><td>${st.opened}</td><td>${st.open_rate}%</td><td>${st.clicked}</td><td>${st.click_rate}%</td></tr>
+                    `).join('')}</tbody></table>` : '<p style="color:var(--text-muted);padding:1rem;">No step data yet</p>';
+            } catch (e) { console.error('Analytics refresh failed', e); }
+        }
+
+        async function refreshDashboard() {
+            const url = dashboardSequenceId ? `/api/sequences/${dashboardSequenceId}/dashboard` : '/api/sequences/dashboard';
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (!data.success || !data.sequence) {
+                    document.getElementById('no-sequence-banner').style.display = 'block';
+                    document.getElementById('dashboard-content').style.display = 'none';
+                    document.getElementById('app-status-badge').textContent = 'No sequence';
+                    return;
+                }
+                document.getElementById('no-sequence-banner').style.display = 'none';
+                document.getElementById('dashboard-content').style.display = 'block';
+                dashboardSequenceId = data.sequence.id;
+                const s = data.stats;
+                document.getElementById('stat-sent').textContent = s.sent_today || 0;
+                document.getElementById('stat-active').textContent = s.active || 0;
+                document.getElementById('stat-opened').textContent = s.opened || 0;
+                document.getElementById('stat-clicked').textContent = s.clicked || 0;
+                document.getElementById('stat-replied').textContent = s.replied || 0;
+                document.getElementById('stat-completed').textContent = s.completed || 0;
+                document.getElementById('dash-seq-name').textContent = data.sequence.name;
+                document.getElementById('dash-seq-status').textContent = data.sequence.status;
+                document.getElementById('dash-seq-status').className = `badge badge-${data.sequence.status === 'active' ? 'running' : 'idle'}`;
+                document.getElementById('dash-seq-meta').textContent = `${data.sequence.steps.length} steps · ${s.total_enrolled || 0} contacts · Runs in background even if you close this tab`;
+                const badge = document.getElementById('app-status-badge');
+                badge.textContent = data.sequence.status;
+                badge.className = `badge badge-${data.sequence.status === 'active' ? 'running' : 'idle'}`;
+
+                renderEnrollmentTabs(data.enrollments || []);
+                refreshInboxBadgeFromGroups();
+                const logContainer = document.getElementById('log-container');
+                logContainer.innerHTML = (data.logs || []).map(l => `<div class="log-line">${l}</div>`).join('') || '<div class="log-line" style="color:var(--text-muted);">Waiting for sends...</div>';
+            } catch (e) { console.error(e); }
+        }
+
+        function renderEnrollmentTabs(enrollments) {
+            const active = enrollments.filter(e => e.status === 'active');
+            const completed = enrollments.filter(e => e.status === 'completed');
+            const replied = enrollments.filter(e => e.status.includes('stopped'));
+            const failed = enrollments.filter(e => e.status === 'stopped_failed');
+
+            const row = (e, color) => `<div class="recipient-item">
+                <span><span class="status-dot" style="background:${color};"></span>${e.email}</span>
+                <span style="color:var(--text-muted);font-size:0.8rem;">${e.step_label}${e.next_send_at ? ' · Next: ' + new Date(e.next_send_at).toLocaleString() : ''}</span>
+            </div>`;
+
+            document.getElementById('tab-active').innerHTML = active.map(e => row(e, 'var(--primary)')).join('') || '<p style="padding:1rem;color:var(--text-muted);">No active contacts</p>';
+            document.getElementById('tab-completed').innerHTML = completed.map(e => row(e, 'var(--success)')).join('') || '<p style="padding:1rem;color:var(--text-muted);">None yet</p>';
+            document.getElementById('tab-replied').innerHTML = replied.map(e => row(e, '#8b5cf6')).join('') || '<p style="padding:1rem;color:var(--text-muted);">No replies yet</p>';
+            document.getElementById('tab-failed').innerHTML = failed.map(e => row(e, 'var(--danger)')).join('') || '<p style="padding:1rem;color:var(--text-muted);">None</p>';
+        }
+
+        function refreshInboxBadgeFromGroups() {
+            fetch(dashboardSequenceId ? `/api/sequences/${dashboardSequenceId}/inbox` : '/api/inbox')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) return;
+                    const replied = (data.groups || {}).replied || 0;
+                    const badge = document.getElementById('inbox-badge');
+                    if (replied > 0) { badge.textContent = replied; badge.classList.remove('hidden'); }
+                    else badge.classList.add('hidden');
+                }).catch(() => {});
+        }
+
+        document.getElementById('check-replies-btn').onclick = async () => {
+            const btn = document.getElementById('check-replies-btn');
+            btn.disabled = true;
+            try {
+                const res = await fetch('/check-replies', { method: 'POST' });
+                const data = await res.json();
+                showToast(data.message || 'Scan done', data.status === 'ok' ? 'success' : 'error');
+                refreshDashboard();
+                refreshInbox();
+                refreshAnalytics();
+            } catch (e) { showToast('Scan failed', 'error'); }
+            btn.disabled = false;
+        };
+
         async function fetchUserSettings() {
             try {
-                const res = await fetch("/settings");
+                const res = await fetch('/settings');
                 const data = await res.json();
                 if (data.success) {
                     document.getElementById('profile-full-name').textContent = data.full_name || 'N/A';
                     document.getElementById('profile-phone').textContent = data.phone || 'N/A';
                     document.getElementById('profile-username').textContent = data.username || 'N/A';
-                    
                     document.getElementById('settings-smtp-email').value = data.smtp_email || '';
                     document.getElementById('settings-smtp-password').value = data.smtp_app_password || '';
-                    if (document.getElementById('settings-imap-host')) {
-                        document.getElementById('settings-imap-host').value = data.imap_host || 'imap.gmail.com';
-                    }
-                    if (document.getElementById('settings-imap-port')) {
-                        document.getElementById('settings-imap-port').value = data.imap_port || 993;
-                    }
                 }
-            } catch (err) {
-                console.error("Failed to load user settings:", err);
-            }
+            } catch (e) {}
         }
 
-        // On document load, fetch settings
-        fetchUserSettings();
-
-        // Handle settings save
-        const settingsForm = document.getElementById('settings-form');
-        settingsForm.onsubmit = async (e) => {
+        document.getElementById('settings-form').onsubmit = async (e) => {
             e.preventDefault();
-            const formData = new FormData(settingsForm);
-            try {
-                const res = await fetch("/settings", { method: 'POST', body: formData });
-                const data = await res.json();
-                if (data.success) {
-                    showToast(data.message, "success");
-                    fetchUserSettings(); // reload settings
-                } else {
-                    showToast(data.error || "Failed to save settings.", "error");
-                }
-            } catch (err) {
-                showToast("Server error saving settings.", "error");
-            }
-        }
+            const res = await fetch('/settings', { method: 'POST', body: new FormData(e.target) });
+            const data = await res.json();
+            showToast(data.success ? data.message : data.error, data.success ? 'success' : 'error');
+            fetchUserSettings();
+        };
 
-        // Settings SMTP Password Visibility Toggle
-        const toggleSettingsPassword = document.getElementById('toggle-settings-password');
-        const settingsPasswordField = document.getElementById('settings-smtp-password');
-
-        toggleSettingsPassword.addEventListener('click', () => {
-            const type = settingsPasswordField.getAttribute('type') === 'password' ? 'text' : 'password';
-            settingsPasswordField.setAttribute('type', type);
-            if (type === 'text') {
-                toggleSettingsPassword.innerHTML = '<i data-lucide="eye-off" style="width: 18px; height: 18px;"></i>';
-            } else {
-                toggleSettingsPassword.innerHTML = '<i data-lucide="eye" style="width: 18px; height: 18px;"></i>';
-            }
-            lucide.createIcons();
-        });
+        setInterval(() => { refreshDashboard(); if (!document.getElementById('view-inbox').classList.contains('hidden')) refreshInbox(); }, 5000);
+        refreshDashboard();
+        fetchUserSettings();
     </script>
 </body>
 </html>

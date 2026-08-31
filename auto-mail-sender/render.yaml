@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: auto-mail-sender
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: TRACKING_BASE_URL
+        sync: false
+      - key: ENABLE_INLINE_WORKER
+        value: "0"
+
+  - type: worker
+    name: sequence-worker
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python sequence_worker.py
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: TRACKING_BASE_URL
+        sync: false
+      - key: WORKER_INTERVAL
+        value: "60"

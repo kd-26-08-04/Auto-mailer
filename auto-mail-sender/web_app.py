@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import uuid
@@ -18,6 +19,22 @@ from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from auto_mailer_engine import DailyWindow, EngineConfig, load_preview, run_outreach, ProgressUpdate, get_db, init_db
+from apollo_templates import get_apollo_template, list_apollo_templates, reset_template_override, save_template_override
+from sequence_engine import (
+    create_sequence,
+    delete_sequence,
+    enroll_from_csv,
+    get_sequence,
+    get_sequence_dashboard,
+    get_inbox_activity,
+    get_analytics,
+    list_sequences,
+    pause_sequence,
+    preview_sequence_steps,
+    process_due_sends,
+    resume_sequence,
+    update_sequence,
+)
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
 
@@ -87,6 +104,34 @@ CORS(app)
 
 # Initialize database indexes
 init_db()
+
+TRACKING_BASE_URL = os.environ.get("TRACKING_BASE_URL", "").rstrip("/")
+ENABLE_INLINE_WORKER = os.environ.get("ENABLE_INLINE_WORKER", "1") == "1"
+_worker_started = False
+_worker_lock = threading.Lock()
+
+
+def _start_inline_worker() -> None:
+    global _worker_started
+    with _worker_lock:
+        if _worker_started or not ENABLE_INLINE_WORKER:
+            return
+        _worker_started = True
+
+    def worker_loop():
+        while True:
+            try:
+                process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=30)
+            except Exception as exc:
+                print(f"[inline-worker] {exc}")
+            import time
+            time.sleep(int(os.environ.get("WORKER_INTERVAL", "60")))
+
+    t = threading.Thread(target=worker_loop, daemon=True, name="sequence-worker")
+    t.start()
+
+
+_start_inline_worker()
 
 # Multi-user thread and runtime state directory
 user_states: Dict[str, AppState] = {}
@@ -411,22 +456,279 @@ def trigger_check_replies():
 @app.route("/", methods=["GET"])
 def index():
     defaults = {
-        "smtp_host": "smtp.gmail.com",
-        "smtp_port": "587",
-        "batch_id": f"batch-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
         "daily_limit": "100",
         "delay_sec": "60",
         "window_start": "09:00",
         "window_end": "17:00",
-        "subject_template": "{Hello|Hi|Hey} {first_name} - quick question",
-        "body_template": "{Hi|Hello} {first_name},\n\nWould love to connect briefly regarding {company}.\n\nBest regards,\n{sender_name}",
-        "enable_followup": False,
-        "followup_days": "3",
         "enable_reply_tracking": True,
-        "imap_host": "imap.gmail.com",
-        "imap_port": "993"
+        "consent_required": True,
+        "default_steps": json.dumps([
+            {
+                "subject": "{Hello|Hi|Hey} {first_name} - quick question",
+                "subject_variants": [
+                    "{Hello|Hi|Hey} {first_name} - quick question",
+                    "Quick note for {first_name} at {company}",
+                ],
+                "body": "<p>{Hi|Hello} {first_name},</p><p>Would love to connect briefly regarding {company}.</p><p>Best,<br>{sender_name}</p>",
+                "delay_days": 0,
+            },
+            {
+                "subject": "Re: {company} - following up",
+                "subject_variants": [
+                    "Re: {company} - following up",
+                    "Bumping this, {first_name}",
+                ],
+                "body": "<p>Hi {first_name},</p><p>Just bumping this in case it got buried. Happy to share more details.</p><p>Thanks,<br>{sender_name}</p>",
+                "delay_days": 3,
+            },
+            {
+                "subject": "Last try - {first_name}",
+                "body": "<p>Hi {first_name},</p><p>I'll keep this short — should I close the loop on this?</p><p>{sender_name}</p>",
+                "delay_days": 5,
+            },
+        ]),
     }
     return render_template("index.html", defaults=defaults, username=session.get("full_name") or session.get("username"))
+
+
+# --- Sequence API (Apollo.io-style) ---
+
+@app.route("/api/templates", methods=["GET"])
+def api_list_templates():
+    user_id = session.get("user_id")
+    return jsonify({"success": True, "templates": list_apollo_templates(user_id)})
+
+
+@app.route("/api/templates/<template_id>", methods=["GET"])
+def api_get_template(template_id):
+    user_id = session.get("user_id")
+    try:
+        tpl = get_apollo_template(template_id, user_id=user_id)
+        return jsonify({"success": True, "template": tpl})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+
+
+@app.route("/api/templates/<template_id>", methods=["PUT"])
+def api_save_template(template_id):
+    user_id = session.get("user_id")
+    try:
+        data = request.get_json(force=True)
+        tpl = save_template_override(
+            user_id,
+            template_id,
+            name=data.get("name", ""),
+            steps=data.get("steps", []),
+            settings=data.get("settings"),
+        )
+        return jsonify({"success": True, "template": tpl, "message": "Template saved. Your edits will load next time."})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/templates/<template_id>/reset", methods=["POST"])
+def api_reset_template(template_id):
+    user_id = session.get("user_id")
+    try:
+        tpl = reset_template_override(user_id, template_id)
+        return jsonify({"success": True, "template": tpl, "message": "Template reset to default."})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences", methods=["GET"])
+def api_list_sequences():
+    user_id = session.get("user_id")
+    return jsonify({"success": True, "sequences": list_sequences(user_id)})
+
+
+@app.route("/api/sequences", methods=["POST"])
+def api_create_sequence():
+    user_id = session.get("user_id")
+    try:
+        data = request.get_json(force=True)
+        seq = create_sequence(
+            user_id,
+            name=data.get("name", "Untitled Sequence"),
+            steps=data.get("steps", []),
+            settings=data.get("settings"),
+        )
+        return jsonify({"success": True, "sequence": seq})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/<sequence_id>", methods=["GET"])
+def api_get_sequence(sequence_id):
+    user_id = session.get("user_id")
+    try:
+        return jsonify({"success": True, "sequence": get_sequence(user_id, sequence_id)})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+
+
+@app.route("/api/sequences/<sequence_id>", methods=["PUT"])
+def api_update_sequence(sequence_id):
+    user_id = session.get("user_id")
+    try:
+        data = request.get_json(force=True)
+        seq = update_sequence(
+            user_id,
+            sequence_id,
+            name=data.get("name"),
+            steps=data.get("steps"),
+            settings=data.get("settings"),
+        )
+        return jsonify({"success": True, "sequence": seq})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/<sequence_id>", methods=["DELETE"])
+def api_delete_sequence(sequence_id):
+    user_id = session.get("user_id")
+    try:
+        delete_sequence(user_id, sequence_id)
+        return jsonify({"success": True})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/<sequence_id>/activate", methods=["POST"])
+def api_activate_sequence(sequence_id):
+    user_id = session.get("user_id")
+    csv_path = None
+    try:
+        if request.files.get("recipients_csv") or request.files.get("recipients_file"):
+            csv_path = save_csv_upload()
+        result = activate_sequence(user_id, sequence_id, csv_path)
+        return jsonify({"success": True, **result})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    finally:
+        if csv_path and os.path.exists(csv_path):
+            try:
+                os.remove(csv_path)
+            except Exception:
+                pass
+
+
+@app.route("/api/sequences/<sequence_id>/enroll", methods=["POST"])
+def api_enroll_sequence(sequence_id):
+    user_id = session.get("user_id")
+    csv_path = None
+    try:
+        csv_path = save_csv_upload()
+        enrolled = enroll_from_csv(user_id, sequence_id, csv_path)
+        return jsonify({"success": True, "enrolled": enrolled})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    finally:
+        if csv_path and os.path.exists(csv_path):
+            try:
+                os.remove(csv_path)
+            except Exception:
+                pass
+
+
+@app.route("/api/sequences/<sequence_id>/pause", methods=["POST"])
+def api_pause_sequence(sequence_id):
+    user_id = session.get("user_id")
+    try:
+        result = pause_sequence(user_id, sequence_id)
+        return jsonify({"success": True, **result})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/<sequence_id>/resume", methods=["POST"])
+def api_resume_sequence(sequence_id):
+    user_id = session.get("user_id")
+    try:
+        result = resume_sequence(user_id, sequence_id)
+        return jsonify({"success": True, **result})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/<sequence_id>/dashboard", methods=["GET"])
+def api_sequence_dashboard(sequence_id):
+    user_id = session.get("user_id")
+    try:
+        data = get_sequence_dashboard(user_id, sequence_id)
+        return jsonify({"success": True, **data})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/dashboard", methods=["GET"])
+def api_dashboard():
+    user_id = session.get("user_id")
+    try:
+        data = get_sequence_dashboard(user_id)
+        return jsonify({"success": True, **data})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/inbox", methods=["GET"])
+@app.route("/api/sequences/<sequence_id>/inbox", methods=["GET"])
+def api_inbox(sequence_id=None):
+    user_id = session.get("user_id")
+    try:
+        data = get_inbox_activity(user_id, sequence_id)
+        return jsonify({"success": True, **data})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/analytics", methods=["GET"])
+@app.route("/api/sequences/<sequence_id>/analytics", methods=["GET"])
+def api_analytics(sequence_id=None):
+    user_id = session.get("user_id")
+    try:
+        data = get_analytics(user_id, sequence_id)
+        return jsonify({"success": True, **data})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/<sequence_id>/preview", methods=["POST"])
+def api_preview_sequence(sequence_id):
+    user_id = session.get("user_id")
+    csv_path = None
+    try:
+        seq = get_sequence(user_id, sequence_id)
+        csv_path = save_csv_upload()
+        previews = preview_sequence_steps(user_id, seq["steps"], csv_path)
+        return jsonify({"success": True, "preview": previews})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    finally:
+        if csv_path and os.path.exists(csv_path):
+            try:
+                os.remove(csv_path)
+            except Exception:
+                pass
+
+
+@app.route("/api/sequences/preview-draft", methods=["POST"])
+def api_preview_draft():
+    csv_path = None
+    try:
+        steps_json = request.form.get("steps_json", "[]")
+        steps = json.loads(steps_json)
+        csv_path = save_csv_upload()
+        previews = preview_sequence_steps(session.get("user_id"), steps, csv_path)
+        return jsonify({"success": True, "preview": previews})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    finally:
+        if csv_path and os.path.exists(csv_path):
+            try:
+                os.remove(csv_path)
+            except Exception:
+                pass
 
 
 @app.route("/preview", methods=["POST"])
@@ -694,9 +996,14 @@ PIXEL_GIF = base64.b64decode(b'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAA
 def track_open(recipient_id, day_key):
     try:
         db = get_db()
+        now = datetime.now().isoformat()
         db.send_log.update_one(
             {"recipient_id": ObjectId(recipient_id), "day_key": day_key},
-            {"$set": {"opened": 1, "opened_at": datetime.now().isoformat()}}
+            {"$set": {"opened": 1, "opened_at": now}}
+        )
+        db.sequence_send_log.update_many(
+            {"recipient_id": ObjectId(recipient_id), "day_key": day_key},
+            {"$set": {"opened": 1, "opened_at": now}}
         )
     except (Exception, InvalidId) as e:
         print(f"Tracking open error: {e}")
@@ -715,9 +1022,14 @@ def track_click(recipient_id, day_key):
         
     try:
         db = get_db()
+        now = datetime.now().isoformat()
         db.send_log.update_one(
             {"recipient_id": ObjectId(recipient_id), "day_key": day_key},
-            {"$inc": {"clicked": 1}, "$set": {"clicked_at": datetime.now().isoformat()}}
+            {"$inc": {"clicked": 1}, "$set": {"clicked_at": now}}
+        )
+        db.sequence_send_log.update_many(
+            {"recipient_id": ObjectId(recipient_id), "day_key": day_key},
+            {"$inc": {"clicked": 1}, "$set": {"clicked_at": now}}
         )
     except (Exception, InvalidId) as e:
         print(f"Tracking click error: {e}")

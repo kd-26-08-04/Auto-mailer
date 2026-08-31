@@ -161,6 +161,15 @@ def init_db(db_path: str = "") -> None:
     db.batch_recipients.create_index([("user_id", 1), ("batch_id", 1), ("recipient_id", 1)], unique=True)
     db.send_log.create_index([("user_id", 1), ("recipient_id", 1), ("day_key", 1)], unique=True)
     db.run_state.create_index([("user_id", 1), ("batch_id", 1), ("day_key", 1)], unique=True)
+    # Sequence collections (Apollo-style outreach)
+    db.sequences.create_index([("user_id", 1), ("status", 1)])
+    db.sequences.create_index([("user_id", 1), ("created_at", -1)])
+    db.enrollments.create_index([("sequence_id", 1), ("status", 1), ("next_send_at", 1)])
+    db.enrollments.create_index([("user_id", 1), ("sequence_id", 1)])
+    db.enrollments.create_index([("sequence_id", 1), ("recipient_id", 1)], unique=True)
+    db.sequence_send_log.create_index([("enrollment_id", 1), ("step_index", 1)], unique=True)
+    db.sequence_send_log.create_index([("user_id", 1), ("day_key", 1), ("status", 1)])
+    db.template_overrides.create_index([("user_id", 1), ("template_id", 1)], unique=True)
 
 
 def resolve_spintax(text: str) -> str:
