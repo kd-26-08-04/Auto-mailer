@@ -38,11 +38,20 @@ from sequence_engine import (
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
 
+import tempfile
+
 BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-ATTACHMENT_DIR = UPLOAD_DIR / "attachments"
-ATTACHMENT_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    UPLOAD_DIR = BASE_DIR / "uploads"
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    ATTACHMENT_DIR = UPLOAD_DIR / "attachments"
+    ATTACHMENT_DIR.mkdir(parents=True, exist_ok=True)
+except (OSError, PermissionError):
+    # Serverless fallback for read-only environments (e.g. Vercel)
+    UPLOAD_DIR = Path(tempfile.gettempdir()) / "uploads"
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    ATTACHMENT_DIR = UPLOAD_DIR / "attachments"
+    ATTACHMENT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def parse_hhmm(value: str) -> tuple[int, int]:
@@ -103,10 +112,14 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 CORS(app)
 
 # Initialize database indexes
-init_db()
+try:
+    init_db()
+except Exception as exc:
+    print(f"[db-init] {exc}")
 
 TRACKING_BASE_URL = os.environ.get("TRACKING_BASE_URL", "").rstrip("/")
-ENABLE_INLINE_WORKER = os.environ.get("ENABLE_INLINE_WORKER", "1") == "1"
+is_serverless = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+ENABLE_INLINE_WORKER = os.environ.get("ENABLE_INLINE_WORKER", "0" if is_serverless else "1") == "1"
 _worker_started = False
 _worker_lock = threading.Lock()
 
