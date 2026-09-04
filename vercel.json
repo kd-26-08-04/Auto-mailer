@@ -8,16 +8,8 @@
   ],
   "routes": [
     {
-      "src": "/static/(.*)",
-      "dest": "/auto-mail-sender/static/$1"
-    },
-    {
-      "src": "/favicon.ico",
-      "dest": "/auto-mail-sender/static/favicon.jpeg"
-    },
-    {
       "src": "/(.*)",
-      "dest": "/auto-mail-sender/wsgi.py"
+      "dest": "auto-mail-sender/wsgi.py"
     }
   ]
 }
