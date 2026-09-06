@@ -155,21 +155,25 @@ class ProgressUpdate:
 
 def init_db(db_path: str = "") -> None:
     """Initialize MongoDB indexes."""
-    db = get_db()
-    db.users.create_index("username", unique=True)
-    db.recipients.create_index([("user_id", 1), ("email", 1)], unique=True)
-    db.batch_recipients.create_index([("user_id", 1), ("batch_id", 1), ("recipient_id", 1)], unique=True)
-    db.send_log.create_index([("user_id", 1), ("recipient_id", 1), ("day_key", 1)], unique=True)
-    db.run_state.create_index([("user_id", 1), ("batch_id", 1), ("day_key", 1)], unique=True)
-    # Sequence collections (Apollo-style outreach)
-    db.sequences.create_index([("user_id", 1), ("status", 1)])
-    db.sequences.create_index([("user_id", 1), ("created_at", -1)])
-    db.enrollments.create_index([("sequence_id", 1), ("status", 1), ("next_send_at", 1)])
-    db.enrollments.create_index([("user_id", 1), ("sequence_id", 1)])
-    db.enrollments.create_index([("sequence_id", 1), ("recipient_id", 1)], unique=True)
-    db.sequence_send_log.create_index([("enrollment_id", 1), ("step_index", 1)], unique=True)
-    db.sequence_send_log.create_index([("user_id", 1), ("day_key", 1), ("status", 1)])
-    db.template_overrides.create_index([("user_id", 1), ("template_id", 1)], unique=True)
+    try:
+        db = get_db()
+        db.users.create_index("username", unique=True)
+        db.recipients.create_index([("user_id", 1), ("email", 1)], unique=True)
+        db.batch_recipients.create_index([("user_id", 1), ("batch_id", 1), ("recipient_id", 1)], unique=True)
+        db.send_log.create_index([("user_id", 1), ("recipient_id", 1), ("day_key", 1)], unique=True)
+        db.run_state.create_index([("user_id", 1), ("batch_id", 1), ("day_key", 1)], unique=True)
+        # Sequence collections (Apollo-style outreach)
+        db.sequences.create_index([("user_id", 1), ("status", 1)])
+        db.sequences.create_index([("user_id", 1), ("created_at", -1)])
+        db.enrollments.create_index([("sequence_id", 1), ("status", 1), ("next_send_at", 1)])
+        db.enrollments.create_index([("user_id", 1), ("sequence_id", 1)])
+        db.enrollments.create_index([("sequence_id", 1), ("recipient_id", 1)], unique=True)
+        db.sequence_send_log.create_index([("enrollment_id", 1), ("step_index", 1)], unique=True)
+        db.sequence_send_log.create_index([("user_id", 1), ("day_key", 1), ("status", 1)])
+        db.template_overrides.create_index([("user_id", 1), ("template_id", 1)], unique=True)
+    except Exception as exc:
+        print(f"[init_db warning] Could not initialize MongoDB indexes: {exc}")
+
 
 
 def resolve_spintax(text: str) -> str:
