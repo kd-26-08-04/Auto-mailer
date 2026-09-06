@@ -243,6 +243,26 @@ def _schedule_first_send(settings: Dict[str, Any]) -> datetime:
     return window.next_open_time(now)
 
 
+def _refresh_due_enrollment_times(sequence: Dict[str, Any]) -> int:
+    """If we're inside working hours, pull forward future send times."""
+    settings = sequence["settings"]
+    window = _parse_window(settings)
+    now = _local_now()
+    if not window.contains(now):
+        return 0
+
+    now_iso = now.isoformat(timespec="seconds")
+    res = get_db().enrollments.update_many(
+        {
+            "sequence_id": sequence["_id"],
+            "status": "active",
+            "next_send_at": {"$gt": now_iso},
+        },
+        {"$set": {"next_send_at": now_iso, "updated_at": _utc_now_iso()}},
+    )
+    return int(res.modified_count)
+
+
 def enroll_from_csv(user_id: str, sequence_id: str, csv_path: str) -> int:
     """Import CSV contacts into a sequence. Returns number enrolled."""
     init_sequence_db()
@@ -338,7 +358,15 @@ def activate_sequence(user_id: str, sequence_id: str, csv_path: Optional[str] = 
         {"_id": ObjectId(sequence_id)},
         {"$set": {"status": "active", "activated_at": now, "updated_at": now}},
     )
-    return {"sequence_id": sequence_id, "status": "active", "enrolled": enrolled, "active_contacts": active_count + enrolled}
+    seq = db.sequences.find_one({"_id": ObjectId(sequence_id)})
+    rescheduled = _refresh_due_enrollment_times(seq) if seq else 0
+    return {
+        "sequence_id": sequence_id,
+        "status": "active",
+        "enrolled": enrolled,
+        "active_contacts": active_count + enrolled,
+        "rescheduled": rescheduled,
+    }
 
 
 def pause_sequence(user_id: str, sequence_id: str) -> Dict[str, Any]:
@@ -360,7 +388,9 @@ def resume_sequence(user_id: str, sequence_id: str) -> Dict[str, Any]:
     )
     if res.matched_count == 0:
         raise ValueError("Paused sequence not found.")
-    return {"sequence_id": sequence_id, "status": "active"}
+    seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
+    rescheduled = _refresh_due_enrollment_times(seq) if seq else 0
+    return {"sequence_id": sequence_id, "status": "active", "rescheduled": rescheduled}
 
 
 def delete_sequence(user_id: str, sequence_id: str) -> None:
@@ -452,7 +482,14 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dic
     day = day_key_local(now)
 
     active_sequences = list(db.sequences.find({"status": "active"}))
-    summary = {"processed": 0, "sent": 0, "skipped": 0, "failed": 0, "sequences": len(active_sequences)}
+    summary: Dict[str, Any] = {
+        "processed": 0,
+        "sent": 0,
+        "skipped": 0,
+        "failed": 0,
+        "sequences": len(active_sequences),
+    }
+    skip_notes: List[str] = []
 
     user_sent_today: Dict[str, int] = {}
     user_last_send: Dict[str, datetime] = {}
@@ -471,6 +508,7 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dic
         if user_id not in user_sent_today:
             user_sent_today[user_id] = _count_user_sends_today(user_id, day)
         if user_sent_today[user_id] >= settings["daily_limit"]:
+            skip_notes.append(f"{seq.get('name', sequence_id)}: daily limit reached")
             continue
 
         if settings.get("enable_reply_tracking") and user_id not in reply_checked_users:
@@ -482,11 +520,16 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dic
             reply_checked_users.add(user_id)
 
         if not window.contains(now):
+            skip_notes.append(
+                f"{seq.get('name', sequence_id)}: outside working hours "
+                f"({settings.get('window_start', '09:00')}-{settings.get('window_end', '17:00')})"
+            )
             continue
 
         try:
             engine = _build_engine_config(user_id, seq, tracking_base_url)
-        except ValueError:
+        except ValueError as exc:
+            skip_notes.append(f"{seq.get('name', sequence_id)}: {exc}")
             continue
 
         min_delay, max_delay = _derive_delay_bounds(engine)
@@ -500,6 +543,15 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dic
                 }
             ).sort("next_send_at", 1).limit(settings["daily_limit"])
         )
+        if not due_enrollments:
+            pending = db.enrollments.find_one(
+                {"sequence_id": sequence_id, "status": "active", "next_send_at": {"$gt": now_iso}},
+                sort=[("next_send_at", 1)],
+            )
+            if pending and pending.get("next_send_at"):
+                skip_notes.append(
+                    f"{seq.get('name', sequence_id)}: next send at {pending['next_send_at']}"
+                )
 
         for enrollment in due_enrollments:
             if summary["processed"] >= max_per_run:
@@ -685,6 +737,8 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dic
                 sleep_sec = random.randint(min_delay, max_delay)
                 time.sleep(min(sleep_sec, 30))
 
+    if skip_notes and summary["sent"] == 0:
+        summary["note"] = "; ".join(dict.fromkeys(skip_notes))
     return summary
 
 
@@ -753,6 +807,28 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
             )
 
     active = db.enrollments.count_documents({"sequence_id": seq_oid, "status": "active"})
+    if not log_lines and active:
+        settings = seq.get("settings", {})
+        window = _parse_window(settings)
+        now = _local_now()
+        pending = db.enrollments.find_one(
+            {"sequence_id": seq_oid, "status": "active", "next_send_at": {"$ne": None}},
+            sort=[("next_send_at", 1)],
+        )
+        if pending and pending.get("next_send_at"):
+            if not window.contains(now):
+                log_lines.append(
+                    "Outside working hours "
+                    f"({settings.get('window_start', '09:00')}-{settings.get('window_end', '17:00')}). "
+                    f"Next send scheduled: {pending['next_send_at']}"
+                )
+            else:
+                log_lines.append(f"Next send scheduled: {pending['next_send_at']}")
+        elif not window.contains(now):
+            log_lines.append(
+                "Outside working hours "
+                f"({settings.get('window_start', '09:00')}-{settings.get('window_end', '17:00')})."
+            )
     completed = db.enrollments.count_documents({"sequence_id": seq_oid, "status": "completed"})
     replied = db.enrollments.count_documents(
         {"sequence_id": seq_oid, "status": {"$in": ["stopped_replied", "stopped_unsubscribed"]}}

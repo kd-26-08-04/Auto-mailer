@@ -21,6 +21,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from auto_mailer_engine import DailyWindow, EngineConfig, load_preview, run_outreach, ProgressUpdate, get_db, init_db
 from apollo_templates import get_apollo_template, list_apollo_templates, reset_template_override, save_template_override
 from sequence_engine import (
+    activate_sequence,
     create_sequence,
     delete_sequence,
     enroll_from_csv,

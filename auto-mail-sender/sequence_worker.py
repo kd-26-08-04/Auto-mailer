@@ -31,7 +31,10 @@ def run_once(tracking_base_url: str, max_sends: int) -> dict:
     init_sequence_db()
     result = process_due_sends(tracking_base_url=tracking_base_url, max_per_run=max_sends)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{stamp}] Worker: {result}")
+    line = f"[{stamp}] Worker: {result}"
+    if result.get("note"):
+        line += f" — {result['note']}"
+    print(line)
     return result
 
 

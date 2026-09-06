@@ -39,15 +39,17 @@
                     <i data-lucide="user-cog"></i> Settings
                 </div>
             </nav>
-            <div class="sidebar-footer" style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; padding-top: 1rem; border-top: 1px solid var(--border);">
-                <div>v2.0 • Backend Worker</div>
+            <div class="sidebar-footer">
+                <div style="font-weight: 600; font-size: 0.7rem; color: var(--text-muted); opacity: 0.8;">v2.0 • Backend Worker</div>
                 {% if username %}
-                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 0.25rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem; color: var(--text);">
-                        <i data-lucide="user" style="width: 16px; height: 16px;"></i>
-                        <span style="font-weight: 500; font-size: 0.85rem; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ username }}</span>
+                <div class="user-pill">
+                    <div class="user-info">
+                        <div class="user-avatar">{{ username[0] | upper }}</div>
+                        <span class="user-name">{{ username }}</span>
                     </div>
-                    <a href="{{ url_for('logout') }}" style="color: var(--danger);" title="Logout"><i data-lucide="log-out" style="width: 16px; height: 16px;"></i></a>
+                    <a href="{{ url_for('logout') }}" class="logout-btn" title="Logout">
+                        <i data-lucide="log-out"></i>
+                    </a>
                 </div>
                 {% endif %}
             </div>
@@ -56,12 +58,12 @@
         <main class="main-content">
             <header>
                 <div><h2 id="page-title">Dashboard</h2></div>
-                <div style="display: flex; align-items: center; gap: 1rem;">
-                    <button id="check-replies-btn" class="btn-secondary" style="width: auto; display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.85rem; font-size: 0.85rem;">
-                        <i data-lucide="inbox" style="width: 16px; height: 16px;"></i> Scan Replies
+                <div class="header-actions" style="display: flex; align-items: center; gap: 0.75rem;">
+                    <button id="check-replies-btn" class="btn-secondary" style="width: auto; display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.5rem 0.95rem; font-size: 0.85rem;">
+                        <i data-lucide="inbox"></i> Scan Replies
                     </button>
-                    <button id="theme-toggle-btn" class="btn-secondary" style="width: auto; padding: 0.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-                        <i data-lucide="moon" style="width: 18px; height: 18px;"></i>
+                    <button id="theme-toggle-btn" class="btn-secondary" style="width: 36px; height: 36px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;" title="Toggle dark mode">
+                        <i data-lucide="moon"></i>
                     </button>
                     <div id="app-status-badge" class="badge badge-idle">Idle</div>
                 </div>
@@ -74,7 +76,7 @@
                     <button class="btn-primary" style="width: auto;" onclick="switchView('sequences'); showCreateSequence();">Create Sequence</button>
                 </div>
 
-                <div id="dashboard-content">
+                <div id="dashboard-content" class="content-stack">
                     <div class="stats-grid">
                         <div class="card stat-card"><div class="stat-label">Sent Today</div><div id="stat-sent" class="stat-value">0</div></div>
                         <div class="card stat-card"><div class="stat-label">Active</div><div id="stat-active" class="stat-value" style="color: var(--primary);">0</div></div>
@@ -84,7 +86,7 @@
                         <div class="card stat-card"><div class="stat-label">Completed</div><div id="stat-completed" class="stat-value">0</div></div>
                     </div>
 
-                    <div class="card" style="margin-bottom: 1rem;">
+                    <div class="card">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <h2><i data-lucide="git-branch"></i> <span id="dash-seq-name">Sequence</span></h2>
                             <span id="dash-seq-status" class="badge badge-idle">draft</span>
@@ -117,8 +119,8 @@
                 <div id="inbox-empty" class="card" style="display:none;text-align:center;padding:2rem;">
                     <p style="color:var(--text-muted);">No sequence activity yet. Launch a sequence to track opens and replies here.</p>
                 </div>
-                <div id="inbox-content">
-                    <div class="card" style="margin-bottom:1rem;">
+                <div id="inbox-content" class="content-stack">
+                    <div class="card">
                         <p style="font-size:0.85rem;color:var(--text-muted);">Activity for contacts <strong>you emailed</strong> only — not your full Gmail inbox.</p>
                         <p id="inbox-seq-name" style="font-weight:600;margin-top:0.5rem;"></p>
                     </div>
@@ -150,15 +152,15 @@
                 <div id="analytics-empty" class="card" style="display:none;text-align:center;padding:2rem;">
                     <p style="color:var(--text-muted);">No data yet. Launch a sequence to see analytics.</p>
                 </div>
-                <div id="analytics-content">
-                    <p id="analytics-seq-name" style="font-weight:600;margin-bottom:1rem;"></p>
+                <div id="analytics-content" class="content-stack">
+                    <p id="analytics-seq-name" style="font-weight:600; font-size:1.1rem; color:var(--text);"></p>
                     <div class="stats-grid">
                         <div class="card stat-card"><div class="stat-label">Open Rate</div><div id="an-open-rate" class="stat-value" style="color:var(--success);">0%</div></div>
                         <div class="card stat-card"><div class="stat-label">Click Rate</div><div id="an-click-rate" class="stat-value" style="color:var(--info);">0%</div></div>
                         <div class="card stat-card"><div class="stat-label">Reply Rate</div><div id="an-reply-rate" class="stat-value" style="color:#8b5cf6;">0%</div></div>
                         <div class="card stat-card"><div class="stat-label">Emails Sent</div><div id="an-total-sent" class="stat-value">0</div></div>
                     </div>
-                    <div class="grid-2" style="gap:1rem;">
+                    <div class="grid-2" style="gap:1.75rem;">
                         <div class="card">
                             <h2><i data-lucide="filter"></i> Funnel</h2>
                             <div id="analytics-funnel" class="funnel-chart"></div>
@@ -168,7 +170,7 @@
                             <div id="analytics-daily" class="bar-chart"></div>
                         </div>
                     </div>
-                    <div class="card" style="margin-top:1rem;">
+                    <div class="card">
                         <h2><i data-lucide="layers"></i> Performance by Step</h2>
                         <div id="analytics-steps" class="step-analytics-table"></div>
                     </div>
@@ -294,9 +296,12 @@
         </main>
     </div>
 
+    <script id="default-steps-data" type="application/json">
+        {{ defaults.get('default_steps', '[]') | safe }}
+    </script>
     <script>
         lucide.createIcons();
-        const DEFAULT_STEPS = {{ defaults.get('default_steps', '[]') | safe }};
+        const DEFAULT_STEPS = JSON.parse(document.getElementById('default-steps-data').textContent || '[]');
 
         let currentSequenceId = null;
         let currentTemplateId = null;
@@ -312,7 +317,7 @@
             updateThemeIcon(isDark);
         };
         function updateThemeIcon(isDark) {
-            themeToggleBtn.innerHTML = isDark ? '<i data-lucide="sun" style="width:18px;height:18px;"></i>' : '<i data-lucide="moon" style="width:18px;height:18px;"></i>';
+            themeToggleBtn.innerHTML = isDark ? '<i data-lucide="sun"></i>' : '<i data-lucide="moon"></i>';
             lucide.createIcons();
         }
 
