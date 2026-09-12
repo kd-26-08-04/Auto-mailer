@@ -273,7 +273,7 @@ def _schedule_first_send(settings: Dict[str, Any]) -> datetime:
 
 
 def _refresh_due_enrollment_times(sequence: Dict[str, Any]) -> int:
-    """If we're inside working hours, pull forward future send times."""
+    """Ensure active enrollments have a valid send time without overwriting future step schedules."""
     settings = sequence["settings"]
     window = _parse_window(settings)
     now = _local_now()
@@ -285,7 +285,7 @@ def _refresh_due_enrollment_times(sequence: Dict[str, Any]) -> int:
         {
             "sequence_id": sequence["_id"],
             "status": "active",
-            "next_send_at": {"$gt": now_iso},
+            "next_send_at": None,
         },
         {"$set": {"next_send_at": now_iso, "updated_at": _utc_now_iso()}},
     )
@@ -434,17 +434,39 @@ def pause_sequence(user_id: str, sequence_id: str) -> Dict[str, Any]:
     return {"sequence_id": sequence_id, "status": "paused"}
 
 
+def retry_failed_contacts(user_id: str, sequence_id: str) -> int:
+    db = get_db()
+    seq_oid = ObjectId(sequence_id)
+    seq = db.sequences.find_one({"_id": seq_oid, "user_id": user_id})
+    if not seq:
+        raise ValueError("Sequence not found.")
+    now = _local_now()
+    now_iso = now.isoformat(timespec="seconds")
+    res = db.enrollments.update_many(
+        {"sequence_id": seq_oid, "status": "stopped_failed"},
+        {"$set": {"status": "active", "next_send_at": now_iso, "updated_at": _utc_now_iso()}}
+    )
+    active_count = db.enrollments.count_documents({"sequence_id": seq_oid, "status": "active"})
+    db.sequences.update_one(
+        {"_id": seq_oid},
+        {"$set": {"stats.active": active_count, "updated_at": _utc_now_iso()}}
+    )
+    return int(res.modified_count)
+
+
 def resume_sequence(user_id: str, sequence_id: str) -> Dict[str, Any]:
     db = get_db()
+    seq_oid = ObjectId(sequence_id)
     res = db.sequences.update_one(
-        {"_id": ObjectId(sequence_id), "user_id": user_id, "status": "paused"},
+        {"_id": seq_oid, "user_id": user_id, "status": "paused"},
         {"$set": {"status": "active", "updated_at": _utc_now_iso()}},
     )
     if res.matched_count == 0:
         raise ValueError("Paused sequence not found.")
-    seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
+    reactivated = retry_failed_contacts(user_id, sequence_id)
+    seq = db.sequences.find_one({"_id": seq_oid, "user_id": user_id})
     rescheduled = _refresh_due_enrollment_times(seq) if seq else 0
-    return {"sequence_id": sequence_id, "status": "active", "rescheduled": rescheduled}
+    return {"sequence_id": sequence_id, "status": "active", "rescheduled": rescheduled, "reactivated": reactivated}
 
 
 def delete_sequence(user_id: str, sequence_id: str) -> None:
@@ -698,26 +720,27 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dic
                     },
                     upsert=True,
                 )
-                db.send_log.update_one(
-                    {
-                        "user_id": user_id,
-                        "recipient_id": recipient_id,
-                        "day_key": day,
-                        "sequence_id": str(sequence_id),
-                        "step_index": step_index,
-                    },
-                    {
-                        "$set": {
-                            "status": "sent",
-                            "sent_at": sent_at,
-                            "sequence_id": str(sequence_id),
-                            "step_index": step_index,
-                            "updated_at": _utc_now_iso(),
+                try:
+                    db.send_log.update_one(
+                        {
+                            "user_id": user_id,
+                            "recipient_id": recipient_id,
+                            "day_key": day,
                         },
-                        "$setOnInsert": {"attempt_no": 1, "created_at": _utc_now_iso()},
-                    },
-                    upsert=True,
-                )
+                        {
+                            "$set": {
+                                "status": "sent",
+                                "sent_at": sent_at,
+                                "sequence_id": str(sequence_id),
+                                "step_index": step_index,
+                                "updated_at": _utc_now_iso(),
+                            },
+                            "$setOnInsert": {"attempt_no": 1, "created_at": _utc_now_iso()},
+                        },
+                        upsert=True,
+                    )
+                except Exception as log_exc:
+                    print(f"[send_log warning] Failed to update send_log: {log_exc}")
 
                 user_sent_today[user_id] += 1
                 user_last_send[user_id] = now
@@ -796,6 +819,24 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dic
     return summary
 
 
+def format_user_friendly_error(raw_error: Optional[str]) -> Optional[str]:
+    if not raw_error:
+        return None
+    err = str(raw_error)
+    if "E11000 duplicate key error" in err and "send_log" in err:
+        return "Daily email limit reached for recipient (already sent an email to this contact today)"
+    if "E11000 duplicate key error" in err:
+        return "Duplicate record error (email already sent today)"
+    if "535" in err or "Authentication" in err or "Username and Password not accepted" in err or "CREDENTIALS_MISSING" in err:
+        return "Gmail login failed — please verify your Gmail Address and App Password in Settings"
+    if "SMTPConnectError" in err or "Connection refused" in err or "timed out" in err:
+        return "Gmail SMTP connection timed out or failed to connect"
+    if "550" in err or "554" in err or "RecipientsFailed" in err:
+        return "Email rejected by recipient server (invalid address or recipient inbox full)"
+    clean = err.replace("full error: ", "").strip()
+    return clean[:250]
+
+
 def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> Dict[str, Any]:
     init_sequence_db()
     db = get_db()
@@ -843,7 +884,7 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
                 sort=[("updated_at", -1)]
             )
             if log_doc and log_doc.get("error"):
-                error_msg = log_doc.get("error")
+                error_msg = format_user_friendly_error(log_doc.get("error"))
 
         enrollment_rows.append(
             {

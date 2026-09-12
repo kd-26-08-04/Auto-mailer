@@ -84,6 +84,7 @@
                         <div class="card stat-card"><div class="stat-label">Clicked</div><div id="stat-clicked" class="stat-value" style="color: var(--info);">0</div></div>
                         <div class="card stat-card"><div class="stat-label">Replied</div><div id="stat-replied" class="stat-value" style="color: #8b5cf6;">0</div></div>
                         <div class="card stat-card"><div class="stat-label">Completed</div><div id="stat-completed" class="stat-value">0</div></div>
+                        <div class="card stat-card"><div class="stat-label">Failed</div><div id="stat-failed" class="stat-value" style="color: var(--danger);">0</div></div>
                     </div>
 
                     <div class="card">
@@ -1120,6 +1121,7 @@
                 document.getElementById('stat-clicked').textContent = s.clicked || 0;
                 document.getElementById('stat-replied').textContent = s.replied || 0;
                 document.getElementById('stat-completed').textContent = s.completed || 0;
+                if (document.getElementById('stat-failed')) document.getElementById('stat-failed').textContent = s.failed || 0;
                 document.getElementById('dash-seq-name').textContent = data.sequence.name;
                 document.getElementById('dash-seq-status').textContent = data.sequence.status;
                 document.getElementById('dash-seq-status').className = `badge badge-${data.sequence.status === 'active' ? 'running' : 'idle'}`;
@@ -1146,12 +1148,30 @@
                 <span style="color:var(--text-muted);font-size:0.8rem;">${e.step_label}${e.next_send_at ? ' · Next: ' + new Date(e.next_send_at).toLocaleString() : ''}</span>
             </div>`;
 
+            function formatFriendlyError(err) {
+                if (!err) return 'Delivery failed';
+                const str = String(err);
+                if (str.includes('E11000 duplicate key error') && str.includes('send_log')) {
+                    return 'Daily recipient limit reached: already sent an email to this contact today';
+                }
+                if (str.includes('E11000 duplicate key error')) {
+                    return 'Duplicate record error (already sent today)';
+                }
+                if (str.includes('535') || str.includes('Authentication') || str.includes('Password not accepted') || str.includes('CREDENTIALS_MISSING')) {
+                    return 'Gmail login failed — please check Settings credentials';
+                }
+                if (str.includes('SMTPConnectError') || str.includes('Connection refused') || str.includes('timed out')) {
+                    return 'Connection timeout to Gmail server';
+                }
+                return str;
+            }
+
             const failedRow = (e) => `<div class="recipient-item" style="flex-direction:column;align-items:flex-start;gap:0.4rem;padding:0.75rem 0.85rem;">
                 <div style="display:flex;justify-content:space-between;width:100%;align-items:center;">
                     <span><span class="status-dot" style="background:var(--danger);"></span><strong style="color:var(--text);">${escapeAttr(e.email)}</strong></span>
                     <span style="color:var(--text-muted);font-size:0.775rem;">${escapeAttr(e.step_label)}</span>
                 </div>
-                ${e.error ? `<div class="error-pill"><i data-lucide="alert-triangle" style="width:13px;height:13px;display:inline-block;vertical-align:middle;margin-right:4px;"></i>${escapeAttr(e.error)}</div>` : '<div class="error-pill">Delivery failed</div>'}
+                <div class="error-pill" title="${escapeAttr(e.error || '')}"><i data-lucide="alert-triangle" style="width:13px;height:13px;display:inline-block;vertical-align:middle;margin-right:4px;"></i>${escapeAttr(formatFriendlyError(e.error))}</div>
             </div>`;
 
             document.getElementById('tab-active').innerHTML = active.map(e => row(e, 'var(--primary)')).join('') || '<p style="padding:1rem;color:var(--text-muted);">No active contacts</p>';
