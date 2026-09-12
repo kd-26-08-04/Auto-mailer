@@ -17,7 +17,7 @@ I'm Reshmi Verma. I'm a Functional Nutritionist, Certified Biohacker, Longevity 
 
 Over the years, my work has naturally brought me into the world of health, nutrition and preventive wellness. Today, I share that journey with a community of over 2,50,000 people on Instagram and 35,000+ subscribers on YouTube.
 
-A large part of my community is made up of women who are trying to take better care of themselves while juggling real life. They want to eat better, feel stronger, manage their health, age well and make better choices for themselves and their families — which means healthy, convenient food is a topic that comes up in my community constantly.
+A large part of my community is made up of women who are trying to take better care of themselves while juggling real life. They want to eat better, feel stronger, manage their health, age well and make better choices for themselves and their families which means healthy, convenient food is a topic that comes up in my community constantly.
 
 That's also how I look at the brands I choose to work with.
 

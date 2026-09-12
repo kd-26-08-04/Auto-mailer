@@ -19,13 +19,13 @@ I'm Reshmi Verma. I'm a Functional Nutritionist, Certified Biohacker, Longevity 
 
 Over the years, my work has naturally brought me into the world of health, nutrition and preventive wellness. Today, I share that journey with a community of over 2,50,000 people on Instagram and 35,000+ subscribers on YouTube.
 
-A large part of my community is made up of women who are trying to take better care of themselves while juggling real life — which makes them an ideal audience for the wellness and D2C brands that agencies like {{company}} work with every day.
+A large part of my community is made up of women who are trying to take better care of themselves while juggling real life which makes them an ideal audience for the wellness and D2C brands that agencies like {{company}} work with every day.
 
 That's also how I look at the brands and agencies I choose to work with.
 
 I'm not someone who likes to simply put a product in a reel and call it a collaboration. I like to understand the brand, the product and the problem it is genuinely solving, and then find a way to bring it to my audience in a way that feels useful, relevant and authentic.
 
-I came across {{company}} and felt there could be a really interesting fit here — whether directly or through one of your clients.
+I came across {{company}} and felt there could be a really interesting fit here whether directly or through one of your clients.
 
 I'd love to connect and explore what we could create together.
 
@@ -68,7 +68,7 @@ I was actually thinking about {{company}} again and the kind of conversation we 
 
 One thing I've always enjoyed about working with brands is finding the story behind the product and connecting it to a real problem people are facing.
 
-Because ultimately, people don't need more creators in their rosters. They need the right creator for the right brief — someone whose audience genuinely cares about what the brand does.
+Because ultimately, people don't need more creators in their rosters. They need the right creator for the right brief someone whose audience genuinely cares about what the brand does.
 
 I have a few thoughts around how we could approach a collaboration with {{company}} in that way and would be happy to share them if there's interest.
 
@@ -115,7 +115,7 @@ I completely understand that sometimes the timing may not be right, priorities c
 
 No hard feelings at all. 😊
 
-If things change in the future and you feel there's an opportunity for us to work together — whether for a direct brief or a client campaign — I'd be very happy to reconnect.
+If things change in the future and you feel there's an opportunity for us to work together whether for a direct brief or a client campaign I'd be very happy to reconnect.
 
 You can reach me anytime at 9175733125 or simply reply to this email.
 
