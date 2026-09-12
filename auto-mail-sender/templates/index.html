@@ -293,6 +293,67 @@
                     </div>
                 </div>
             </section>
+
+            <!-- Lead Review & Edit Modal -->
+            <div id="lead-review-modal" class="modal-backdrop">
+                <div class="modal-dialog">
+                    <div class="modal-header">
+                        <h3><i data-lucide="table"></i> Review & Edit Contacts</h3>
+                        <button type="button" class="modal-close-btn" onclick="closeLeadReviewModal()"><i data-lucide="x"></i></button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+                            Parsed contacts from file. Modify any cell, add or remove lead rows before launching sequence.
+                        </p>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                            <span id="lead-count-badge" class="badge badge-idle">0 contacts</span>
+                            <button type="button" class="btn-secondary" style="width: auto; font-size: 0.8rem; padding: 0.4rem 0.75rem;" onclick="addLeadRow()">
+                                <i data-lucide="user-plus"></i> Add Row
+                            </button>
+                        </div>
+                        <div class="lead-table-wrapper">
+                            <table class="lead-table">
+                                <thead>
+                                    <tr id="lead-table-head"></tr>
+                                </thead>
+                                <tbody id="lead-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn-secondary" onclick="closeLeadReviewModal()">Cancel</button>
+                        <button type="button" id="confirm-start-seq-btn" class="btn-primary" onclick="confirmAndStartSequence()">
+                            <i data-lucide="rocket"></i> Confirm & Start Sequence
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Credentials Required Modal -->
+            <div id="credentials-modal" class="modal-backdrop">
+                <div class="modal-dialog" style="max-width: 480px;">
+                    <div class="modal-header">
+                        <h3><i data-lucide="key-round"></i> Gmail App Password Required</h3>
+                        <button type="button" class="modal-close-btn" onclick="closeCredentialsModal()"><i data-lucide="x"></i></button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+                            Please enter your Sender Gmail address and Gmail App Password to enable sequence outreach.
+                        </p>
+                        <form id="modal-credentials-form">
+                            <div class="form-group" style="margin-bottom: 1rem;">
+                                <label style="font-weight: 600;">Sender Gmail Address</label>
+                                <input id="modal-smtp-email" type="email" required placeholder="name@gmail.com" />
+                            </div>
+                            <div class="form-group" style="margin-bottom: 1.25rem;">
+                                <label style="font-weight: 600;">Gmail App Password</label>
+                                <input id="modal-smtp-password" type="password" required placeholder="xxxx xxxx xxxx xxxx" />
+                            </div>
+                            <button type="submit" class="btn-primary" style="width: 100%;"><i data-lucide="save"></i> Save & Continue Launch</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -307,6 +368,32 @@
         let currentTemplateId = null;
         let stepEditors = [];
         let dashboardSequenceId = null;
+        let currentParsedLeads = [];
+
+        function debounce(func, wait = 400) {
+            let timeout;
+            return function (...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+
+        const debouncedSaveSequence = debounce(() => {
+            if (currentSequenceId) {
+                saveSequence(false);
+            }
+        }, 600);
+
+        document.addEventListener('DOMContentLoaded', () => {
+            ['seq-name-input', 'set-delay', 'set-daily-limit', 'set-window-start', 'set-window-end'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('input', () => {
+                        if (currentSequenceId) debouncedSaveSequence();
+                    });
+                }
+            });
+        });
 
         // Theme
         const themeToggleBtn = document.getElementById('theme-toggle-btn');
@@ -655,10 +742,179 @@
             } catch (e) { showToast('Save failed: ' + e, 'error'); return false; }
         }
 
+        // --- Lead Review & Edit Modal JS ---
+        function openLeadReviewModal(leads) {
+            currentParsedLeads = Array.isArray(leads) ? JSON.parse(JSON.stringify(leads)) : [];
+            renderLeadReviewTable();
+            document.getElementById('lead-review-modal').classList.add('active');
+            lucide.createIcons();
+        }
+
+        function closeLeadReviewModal() {
+            document.getElementById('lead-review-modal').classList.remove('active');
+        }
+
+        function renderLeadReviewTable() {
+            const badge = document.getElementById('lead-count-badge');
+            badge.textContent = `${currentParsedLeads.length} contacts`;
+
+            const head = document.getElementById('lead-table-head');
+            const body = document.getElementById('lead-table-body');
+            head.innerHTML = '';
+            body.innerHTML = '';
+
+            if (!currentParsedLeads.length) {
+                body.innerHTML = '<tr><td colspan="6" style="padding:1.5rem;text-align:center;color:var(--text-muted);">No contacts in list. Click "Add Row" to add a lead manually.</td></tr>';
+                return;
+            }
+
+            // Columns to show
+            const keys = ['email', 'first_name', 'company', 'consent'];
+            currentParsedLeads.forEach(row => {
+                Object.keys(row).forEach(k => {
+                    if (!keys.includes(k.toLowerCase()) && k !== '_id') keys.push(k.toLowerCase());
+                });
+            });
+
+            head.innerHTML = '<th>#</th>' + keys.map(k => `<th>${escapeAttr(k)}</th>`).join('') + '<th style="text-align:center;">Action</th>';
+
+            body.innerHTML = currentParsedLeads.map((row, idx) => {
+                const cells = keys.map(k => {
+                    const val = row[k] ?? row[k.toLowerCase()] ?? '';
+                    return `<td><input type="text" value="${escapeAttr(val)}" oninput="updateLeadCell(${idx}, '${escapeAttr(k)}', this.value)" /></td>`;
+                }).join('');
+                return `<tr><td style="font-weight:600;color:var(--text-muted);">${idx + 1}</td>${cells}<td style="text-align:center;"><button type="button" class="btn-icon btn-icon-sm" onclick="removeLeadRow(${idx})" title="Delete lead"><i data-lucide="trash-2"></i></button></td></tr>`;
+            }).join('');
+
+            lucide.createIcons();
+        }
+
+        function updateLeadCell(index, key, val) {
+            if (currentParsedLeads[index]) {
+                currentParsedLeads[index][key] = val.trim();
+            }
+        }
+
+        function addLeadRow() {
+            currentParsedLeads.push({ email: '', first_name: '', company: '', consent: 'true' });
+            renderLeadReviewTable();
+        }
+
+        function removeLeadRow(index) {
+            currentParsedLeads.splice(index, 1);
+            renderLeadReviewTable();
+        }
+
+        async function confirmAndStartSequence() {
+            if (!currentParsedLeads.length) {
+                showToast('Please add at least one valid lead contact', 'error');
+                return;
+            }
+            const validLeads = currentParsedLeads.filter(r => r.email && r.email.includes('@'));
+            if (!validLeads.length) {
+                showToast('No valid email addresses found in lead list', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('confirm-start-seq-btn');
+            btn.disabled = true;
+
+            if (!await saveSequence(false)) {
+                btn.disabled = false;
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/sequences/${currentSequenceId}/activate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contacts: validLeads })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeLeadReviewModal();
+                    showToast(`Launched! ${data.enrolled} contact(s) enrolled. Backend sending now.`, 'success');
+                    dashboardSequenceId = currentSequenceId;
+                    openSequence(currentSequenceId);
+                    switchView('dashboard');
+                } else if (data.code === 'credentials_missing') {
+                    closeLeadReviewModal();
+                    openCredentialsModal();
+                } else {
+                    showToast(data.error, 'error');
+                }
+            } catch (e) {
+                showToast('Launch failed: ' + e, 'error');
+            }
+            btn.disabled = false;
+        }
+
+        // --- Credentials Required Modal JS ---
+        function openCredentialsModal() {
+            document.getElementById('credentials-modal').classList.add('active');
+            lucide.createIcons();
+        }
+
+        function closeCredentialsModal() {
+            document.getElementById('credentials-modal').classList.remove('active');
+        }
+
+        document.getElementById('modal-credentials-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('modal-smtp-email').value.trim();
+            const password = document.getElementById('modal-smtp-password').value.trim();
+            
+            const fd = new FormData();
+            fd.append('smtp_email', email);
+            fd.append('smtp_app_password', password);
+
+            try {
+                const res = await fetch('/settings', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Credentials saved successfully!', 'success');
+                    closeCredentialsModal();
+                    fetchUserSettings();
+                    if (currentParsedLeads && currentParsedLeads.length) {
+                        confirmAndStartSequence();
+                    } else {
+                        launchSequence();
+                    }
+                } else {
+                    showToast(data.error, 'error');
+                }
+            } catch (err) {
+                showToast('Failed to save credentials', 'error');
+            }
+        };
+
+        // File upload change listener: Auto parse and open Lead Review Modal
+        const seqFileInput = document.getElementById('seq-csv-input');
+        if (seqFileInput) {
+            seqFileInput.onchange = async () => {
+                const file = seqFileInput.files[0];
+                if (!file) return;
+                const fd = new FormData();
+                fd.append('recipients_file', file);
+                showToast('Reading Excel/CSV contacts...', 'info');
+                try {
+                    const res = await fetch('/api/parse-leads', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    if (!data.success) { showToast(data.error, 'error'); return; }
+                    currentParsedLeads = data.rows || [];
+                    openLeadReviewModal(currentParsedLeads);
+                } catch (e) { showToast('File parsing failed: ' + e, 'error'); }
+            };
+        }
+
         async function launchSequence() {
             if (!await saveSequence(false)) return;
+            if (currentParsedLeads && currentParsedLeads.length) {
+                openLeadReviewModal(currentParsedLeads);
+                return;
+            }
             const csv = document.getElementById('seq-csv-input').files[0];
-            if (!csv) { showToast('Upload a CSV file with contacts first', 'error'); return; }
+            if (!csv) { showToast('Upload an Excel (.xls/.xlsx) or CSV file with contacts first', 'error'); return; }
             const fd = new FormData();
             fd.append('recipients_csv', csv);
             try {
@@ -669,6 +925,8 @@
                     dashboardSequenceId = currentSequenceId;
                     openSequence(currentSequenceId);
                     switchView('dashboard');
+                } else if (data.code === 'credentials_missing') {
+                    openCredentialsModal();
                 } else showToast(data.error, 'error');
             } catch (e) { showToast('Launch failed: ' + e, 'error'); }
         }
@@ -689,7 +947,11 @@
 
         async function enrollMore() {
             const csv = document.getElementById('seq-csv-input').files[0];
-            if (!csv) { showToast('Select a CSV file first', 'error'); return; }
+            if (currentParsedLeads && currentParsedLeads.length) {
+                openLeadReviewModal(currentParsedLeads);
+                return;
+            }
+            if (!csv) { showToast('Select an Excel or CSV file first', 'error'); return; }
             const fd = new FormData();
             fd.append('recipients_csv', csv);
             const res = await fetch(`/api/sequences/${currentSequenceId}/enroll`, { method: 'POST', body: fd });
@@ -876,18 +1138,27 @@
         function renderEnrollmentTabs(enrollments) {
             const active = enrollments.filter(e => e.status === 'active');
             const completed = enrollments.filter(e => e.status === 'completed');
-            const replied = enrollments.filter(e => e.status.includes('stopped'));
-            const failed = enrollments.filter(e => e.status === 'stopped_failed');
+            const replied = enrollments.filter(e => e.status.includes('stopped') && e.status !== 'stopped_failed');
+            const failed = enrollments.filter(e => e.status === 'stopped_failed' || e.status === 'failed');
 
             const row = (e, color) => `<div class="recipient-item">
                 <span><span class="status-dot" style="background:${color};"></span>${e.email}</span>
                 <span style="color:var(--text-muted);font-size:0.8rem;">${e.step_label}${e.next_send_at ? ' · Next: ' + new Date(e.next_send_at).toLocaleString() : ''}</span>
             </div>`;
 
+            const failedRow = (e) => `<div class="recipient-item" style="flex-direction:column;align-items:flex-start;gap:0.4rem;padding:0.75rem 0.85rem;">
+                <div style="display:flex;justify-content:space-between;width:100%;align-items:center;">
+                    <span><span class="status-dot" style="background:var(--danger);"></span><strong style="color:var(--text);">${escapeAttr(e.email)}</strong></span>
+                    <span style="color:var(--text-muted);font-size:0.775rem;">${escapeAttr(e.step_label)}</span>
+                </div>
+                ${e.error ? `<div class="error-pill"><i data-lucide="alert-triangle" style="width:13px;height:13px;display:inline-block;vertical-align:middle;margin-right:4px;"></i>${escapeAttr(e.error)}</div>` : '<div class="error-pill">Delivery failed</div>'}
+            </div>`;
+
             document.getElementById('tab-active').innerHTML = active.map(e => row(e, 'var(--primary)')).join('') || '<p style="padding:1rem;color:var(--text-muted);">No active contacts</p>';
             document.getElementById('tab-completed').innerHTML = completed.map(e => row(e, 'var(--success)')).join('') || '<p style="padding:1rem;color:var(--text-muted);">None yet</p>';
             document.getElementById('tab-replied').innerHTML = replied.map(e => row(e, '#8b5cf6')).join('') || '<p style="padding:1rem;color:var(--text-muted);">No replies yet</p>';
-            document.getElementById('tab-failed').innerHTML = failed.map(e => row(e, 'var(--danger)')).join('') || '<p style="padding:1rem;color:var(--text-muted);">None</p>';
+            document.getElementById('tab-failed').innerHTML = failed.map(failedRow).join('') || '<p style="padding:1rem;color:var(--text-muted);">No failed contacts 🎉</p>';
+            lucide.createIcons();
         }
 
         function refreshInboxBadgeFromGroups() {

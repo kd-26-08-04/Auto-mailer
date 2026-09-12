@@ -18,13 +18,14 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from auto_mailer_engine import DailyWindow, EngineConfig, load_preview, run_outreach, ProgressUpdate, get_db, init_db
+from auto_mailer_engine import DailyWindow, EngineConfig, load_preview, run_outreach, ProgressUpdate, get_db, init_db, _parse_recipients_file
 from apollo_templates import get_apollo_template, list_apollo_templates, reset_template_override, save_template_override
 from sequence_engine import (
     activate_sequence,
     create_sequence,
     delete_sequence,
     enroll_from_csv,
+    enroll_from_data,
     get_sequence,
     get_sequence_dashboard,
     get_inbox_activity,
@@ -608,17 +609,46 @@ def api_delete_sequence(sequence_id):
         return jsonify({"success": False, "error": str(exc)}), 400
 
 
+@app.route("/api/parse-leads", methods=["POST"])
+def api_parse_leads():
+    csv_path = None
+    try:
+        csv_path = save_csv_upload()
+        rows = _parse_recipients_file(csv_path)
+        if not rows:
+            return jsonify({"success": False, "error": "No valid lead rows found in file."}), 400
+        headers = list(rows[0].keys()) if rows else []
+        return jsonify({"success": True, "rows": rows, "headers": headers, "count": len(rows)})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    finally:
+        if csv_path and os.path.exists(csv_path):
+            try:
+                os.remove(csv_path)
+            except Exception:
+                pass
+
+
 @app.route("/api/sequences/<sequence_id>/activate", methods=["POST"])
 def api_activate_sequence(sequence_id):
     user_id = session.get("user_id")
     csv_path = None
+    contacts_data = None
     try:
-        if request.files.get("recipients_csv") or request.files.get("recipients_file"):
+        if request.is_json:
+            data = request.get_json(silent=True) or {}
+            contacts_data = data.get("contacts")
+        
+        if not contacts_data and (request.files.get("recipients_csv") or request.files.get("recipients_file")):
             csv_path = save_csv_upload()
-        result = activate_sequence(user_id, sequence_id, csv_path)
+
+        result = activate_sequence(user_id, sequence_id, csv_path=csv_path, contacts_data=contacts_data)
         return jsonify({"success": True, **result})
     except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+        err_str = str(exc)
+        if "CREDENTIALS_MISSING" in err_str:
+            return jsonify({"success": False, "code": "credentials_missing", "error": err_str.replace("CREDENTIALS_MISSING: ", "")}), 400
+        return jsonify({"success": False, "error": err_str}), 400
     finally:
         if csv_path and os.path.exists(csv_path):
             try:
@@ -632,8 +662,15 @@ def api_enroll_sequence(sequence_id):
     user_id = session.get("user_id")
     csv_path = None
     try:
-        csv_path = save_csv_upload()
-        enrolled = enroll_from_csv(user_id, sequence_id, csv_path)
+        if request.is_json:
+            data = request.get_json(silent=True) or {}
+            contacts = data.get("contacts")
+            if not contacts:
+                return jsonify({"success": False, "error": "No contacts provided"}), 400
+            enrolled = enroll_from_data(user_id, sequence_id, contacts)
+        else:
+            csv_path = save_csv_upload()
+            enrolled = enroll_from_csv(user_id, sequence_id, csv_path)
         return jsonify({"success": True, "enrolled": enrolled})
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 400

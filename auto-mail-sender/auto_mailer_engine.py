@@ -192,31 +192,68 @@ def resolve_spintax(text: str) -> str:
     return text
 
 
+def _is_valid_email(email_str: str) -> bool:
+    if not email_str or not isinstance(email_str, str):
+        return False
+    email_str = email_str.strip()
+    return bool(re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email_str))
+
+
 def _parse_recipients_file(file_path: str) -> List[Dict[str, Any]]:
     """Parses recipients from CSV, Excel .xlsx, or .xls."""
     rows: List[Dict[str, Any]] = []
     lower_path = file_path.lower()
     
     if lower_path.endswith('.xlsx') or lower_path.endswith('.xls'):
-        import openpyxl
-        wb = openpyxl.load_workbook(file_path, data_only=True)
-        ws = wb.active
-        all_rows = list(ws.iter_rows(values_only=True))
-        if not all_rows:
-            return []
-        headers = [str(h).strip().lower() if h is not None else "" for h in all_rows[0]]
-        for row in all_rows[1:]:
-            if not any(row):
-                continue
-            row_dict = {}
-            for col_idx, header in enumerate(headers):
-                if not header:
-                    continue
-                val = row[col_idx] if col_idx < len(row) else ""
-                val_str = str(val).strip() if val is not None else ""
-                row_dict[header] = val_str
-            if row_dict and row_dict.get("email"):
-                rows.append(row_dict)
+        parsed_excel = False
+        # Try openpyxl first (.xlsx)
+        if lower_path.endswith('.xlsx'):
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+                ws = wb.active
+                all_rows = list(ws.iter_rows(values_only=True))
+                if all_rows:
+                    headers = [str(h).strip().lower() if h is not None else "" for h in all_rows[0]]
+                    for row in all_rows[1:]:
+                        if not any(row):
+                            continue
+                        row_dict = {}
+                        for col_idx, header in enumerate(headers):
+                            if not header:
+                                continue
+                            val = row[col_idx] if col_idx < len(row) else ""
+                            val_str = str(val).strip() if val is not None else ""
+                            row_dict[header] = val_str
+                        if row_dict and row_dict.get("email"):
+                            rows.append(row_dict)
+                parsed_excel = True
+            except Exception:
+                parsed_excel = False
+                
+        # Try xlrd for .xls or if openpyxl failed
+        if not parsed_excel:
+            try:
+                import xlrd
+                wb = xlrd.open_workbook(file_path)
+                ws = wb.sheet_by_index(0)
+                if ws.nrows > 0:
+                    headers = [str(ws.cell_value(0, col)).strip().lower() for col in range(ws.ncols)]
+                    for row_idx in range(1, ws.nrows):
+                        row_dict = {}
+                        for col_idx, header in enumerate(headers):
+                            if not header:
+                                continue
+                            val = ws.cell_value(row_idx, col_idx)
+                            val_str = str(val).strip() if val is not None else ""
+                            if val_str.endswith(".0") and isinstance(val, float):
+                                val_str = str(int(val))
+                            row_dict[header] = val_str
+                        if row_dict and row_dict.get("email"):
+                            rows.append(row_dict)
+            except Exception as exc:
+                if not rows:
+                    raise ValueError(f"Failed to parse Excel file: {exc}")
     else:
         # Default to CSV
         with open(file_path, "r", encoding="utf-8-sig", newline="") as f:

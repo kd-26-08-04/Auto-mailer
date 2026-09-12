@@ -201,6 +201,38 @@ def update_sequence(
 
     db.sequences.update_one({"_id": ObjectId(sequence_id)}, {"$set": update})
     updated = db.sequences.find_one({"_id": ObjectId(sequence_id)})
+    
+    # Recalculate next_send_at for all active enrollments when timing or steps change
+    try:
+        active_enrollments = list(db.enrollments.find({"sequence_id": ObjectId(sequence_id), "status": "active"}))
+        if active_enrollments:
+            norm_settings = updated.get("settings", {})
+            norm_steps = updated.get("steps", [])
+            now = _local_now()
+            for e in active_enrollments:
+                step_idx = int(e.get("current_step", 0))
+                if step_idx == 0:
+                    first_send = _schedule_first_send(norm_settings)
+                    new_next = first_send.isoformat(timespec="seconds")
+                else:
+                    base_time = None
+                    if e.get("last_sent_at"):
+                        try:
+                            base_time = datetime.fromisoformat(e["last_sent_at"])
+                        except Exception:
+                            pass
+                    if not base_time:
+                        base_time = now
+                    next_dt = _compute_next_send_after_step(norm_settings, norm_steps, step_idx, base_time)
+                    new_next = next_dt.isoformat(timespec="seconds") if next_dt else None
+                
+                db.enrollments.update_one(
+                    {"_id": e["_id"]},
+                    {"$set": {"next_send_at": new_next, "updated_at": _utc_now_iso()}}
+                )
+    except Exception as exc:
+        print(f"[update_sequence warning] Failed to update enrollment send times: {exc}")
+
     return _seq_to_dict(updated)
 
 
@@ -263,30 +295,30 @@ def _refresh_due_enrollment_times(sequence: Dict[str, Any]) -> int:
     return int(res.modified_count)
 
 
-def enroll_from_csv(user_id: str, sequence_id: str, csv_path: str) -> int:
-    """Import CSV contacts into a sequence. Returns number enrolled."""
+def enroll_from_data(user_id: str, sequence_id: str, rows: List[Dict[str, Any]]) -> int:
+    """Import list of contact dicts into a sequence. Returns number enrolled."""
     init_sequence_db()
     db = get_db()
     seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
     if not seq:
         raise ValueError("Sequence not found.")
 
-    rows = _parse_recipients_file(csv_path)
     if not rows:
-        raise ValueError("No valid recipients found in file.")
-    if "email" not in rows[0]:
-        raise ValueError("File must include an 'email' column header.")
-
+        raise ValueError("No valid recipients provided.")
+    
     settings = seq["settings"]
     consent_required = settings.get("consent_required", True)
     first_send_at = _schedule_first_send(settings)
     enrolled = 0
 
     for row in rows:
+        email = str(row.get("email", "")).strip().lower()
+        if not email or "@" not in email:
+            continue
         if consent_required and not _is_truthy_consent(row.get("consent"), ("true", "1", "yes", "y")):
             continue
+            
         recipient_id = _upsert_recipient(user_id, row)
-        email = str(row.get("email", "")).strip().lower()
 
         existing = db.enrollments.find_one(
             {"sequence_id": ObjectId(sequence_id), "recipient_id": recipient_id}
@@ -300,6 +332,8 @@ def enroll_from_csv(user_id: str, sequence_id: str, csv_path: str) -> int:
                     "$set": {
                         "data": row,
                         "email": email,
+                        "status": "active" if existing["status"] == "stopped_failed" else existing["status"],
+                        "next_send_at": first_send_at.isoformat(timespec="seconds") if existing["status"] == "stopped_failed" else existing.get("next_send_at"),
                         "updated_at": _utc_now_iso(),
                     }
                 },
@@ -334,9 +368,23 @@ def enroll_from_csv(user_id: str, sequence_id: str, csv_path: str) -> int:
     return enrolled
 
 
-def activate_sequence(user_id: str, sequence_id: str, csv_path: Optional[str] = None) -> Dict[str, Any]:
+def enroll_from_csv(user_id: str, sequence_id: str, csv_path: str) -> int:
+    """Import CSV/Excel contacts into a sequence. Returns number enrolled."""
+    rows = _parse_recipients_file(csv_path)
+    if not rows:
+        raise ValueError("No valid recipients found in file.")
+    if "email" not in rows[0]:
+        raise ValueError("File must include an 'email' column header.")
+    return enroll_from_data(user_id, sequence_id, rows)
+
+
+def activate_sequence(user_id: str, sequence_id: str, csv_path: Optional[str] = None, contacts_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     init_sequence_db()
     db = get_db()
+    user = db.users.find_one({"_id": ObjectId(user_id)})
+    if not user or not user.get("smtp_email") or not user.get("smtp_app_password"):
+        raise ValueError("CREDENTIALS_MISSING: Sender email or Gmail App Password is not configured. Please save your credentials in Settings.")
+
     seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
     if not seq:
         raise ValueError("Sequence not found.")
@@ -344,16 +392,25 @@ def activate_sequence(user_id: str, sequence_id: str, csv_path: Optional[str] = 
         raise ValueError("Add at least one email step before activating.")
 
     enrolled = 0
-    if csv_path:
+    if contacts_data:
+        enrolled = enroll_from_data(user_id, sequence_id, contacts_data)
+    elif csv_path:
         enrolled = enroll_from_csv(user_id, sequence_id, csv_path)
 
     active_count = db.enrollments.count_documents(
         {"sequence_id": ObjectId(sequence_id), "status": "active"}
     )
     if active_count == 0 and enrolled == 0:
-        raise ValueError("Upload a CSV with at least one contact before activating.")
+        raise ValueError("Upload a file or provide contacts before activating.")
 
     now = _utc_now_iso()
+    # Recalculate step 0 send time so starting sequence sends immediately inside working hours
+    first_send = _schedule_first_send(seq["settings"]).isoformat(timespec="seconds")
+    db.enrollments.update_many(
+        {"sequence_id": ObjectId(sequence_id), "status": "active", "current_step": 0},
+        {"$set": {"next_send_at": first_send, "updated_at": now}}
+    )
+
     db.sequences.update_one(
         {"_id": ObjectId(sequence_id)},
         {"$set": {"status": "active", "activated_at": now, "updated_at": now}},
@@ -782,6 +839,15 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
         else:
             step_label = e["status"].replace("_", " ").title()
 
+        error_msg = None
+        if e["status"] in ("stopped_failed", "failed"):
+            log_doc = db.sequence_send_log.find_one(
+                {"enrollment_id": e["_id"]},
+                sort=[("updated_at", -1)]
+            )
+            if log_doc and log_doc.get("error"):
+                error_msg = log_doc.get("error")
+
         enrollment_rows.append(
             {
                 "email": e.get("email"),
@@ -791,6 +857,7 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
                 "step_label": step_label,
                 "next_send_at": e.get("next_send_at"),
                 "last_sent_at": e.get("last_sent_at"),
+                "error": error_msg,
             }
         )
 
