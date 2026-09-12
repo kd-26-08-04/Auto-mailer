@@ -108,7 +108,7 @@ class AppState:
 
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or "auto-mailer-stable-flask-secret-key-2026"
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload size limit
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 CORS(app)
@@ -124,6 +124,14 @@ is_serverless = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNC
 ENABLE_INLINE_WORKER = os.environ.get("ENABLE_INLINE_WORKER", "0" if is_serverless else "1") == "1"
 _worker_started = False
 _worker_lock = threading.Lock()
+
+
+def _trigger_serverless_send() -> None:
+    """On serverless (Vercel), trigger due sequence sends inline."""
+    try:
+        process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=15)
+    except Exception as exc:
+        print(f"[serverless-send] {exc}")
 
 
 def _start_inline_worker() -> None:
@@ -702,9 +710,21 @@ def api_resume_sequence(sequence_id):
         return jsonify({"success": False, "error": str(exc)}), 400
 
 
+@app.route("/api/cron/send", methods=["GET", "POST"])
+def api_cron_send():
+    """Endpoint for Vercel Cron or frontend polling to trigger sequence sends."""
+    try:
+        res = process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=30)
+        return jsonify({"success": True, "processed": res})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
 @app.route("/api/sequences/<sequence_id>/dashboard", methods=["GET"])
 def api_sequence_dashboard(sequence_id):
     user_id = session.get("user_id")
+    if is_serverless or not ENABLE_INLINE_WORKER:
+        _trigger_serverless_send()
     try:
         data = get_sequence_dashboard(user_id, sequence_id)
         return jsonify({"success": True, **data})
@@ -715,6 +735,8 @@ def api_sequence_dashboard(sequence_id):
 @app.route("/api/sequences/dashboard", methods=["GET"])
 def api_dashboard():
     user_id = session.get("user_id")
+    if is_serverless or not ENABLE_INLINE_WORKER:
+        _trigger_serverless_send()
     try:
         data = get_sequence_dashboard(user_id)
         return jsonify({"success": True, **data})

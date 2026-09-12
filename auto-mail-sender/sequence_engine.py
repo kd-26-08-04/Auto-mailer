@@ -268,11 +268,8 @@ def _upsert_recipient(user_id: str, row: Dict[str, Any]) -> ObjectId:
 
 
 def _schedule_first_send(settings: Dict[str, Any]) -> datetime:
-    now = _local_now()
-    window = _parse_window(settings)
-    if window.contains(now):
-        return now
-    return window.next_open_time(now)
+    # Step 0 sends immediately on launch
+    return _local_now()
 
 
 def _refresh_due_enrollment_times(sequence: Dict[str, Any]) -> int:

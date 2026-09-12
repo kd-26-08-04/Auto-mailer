@@ -1209,7 +1209,12 @@
             fetchUserSettings();
         };
 
-        setInterval(() => { refreshDashboard(); if (!document.getElementById('view-inbox').classList.contains('hidden')) refreshInbox(); }, 5000);
+        setInterval(() => {
+            fetch('/api/cron/send').catch(() => {});
+            refreshDashboard();
+            if (!document.getElementById('view-inbox').classList.contains('hidden')) refreshInbox();
+        }, 5000);
+        fetch('/api/cron/send').catch(() => {});
         refreshDashboard();
         fetchUserSettings();
     </script>

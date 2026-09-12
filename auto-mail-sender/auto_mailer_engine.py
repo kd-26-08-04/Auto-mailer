@@ -47,7 +47,8 @@ def _utc_now_iso() -> str:
 
 
 def _local_now() -> datetime:
-    return datetime.now()
+    tz_offset_hours = float(os.environ.get("TIMEZONE_OFFSET_HOURS", "5.5"))
+    return datetime.utcnow() + timedelta(hours=tz_offset_hours)
 
 
 def day_key_local(dt: Optional[datetime] = None) -> str:
