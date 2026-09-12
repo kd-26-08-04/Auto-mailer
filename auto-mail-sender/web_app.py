@@ -126,12 +126,21 @@ _worker_started = False
 _worker_lock = threading.Lock()
 
 
+_serverless_send_lock = threading.Lock()
+
 def _trigger_serverless_send() -> None:
-    """On serverless (Vercel), trigger due sequence sends inline."""
-    try:
-        process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=15)
-    except Exception as exc:
-        print(f"[serverless-send] {exc}")
+    """On serverless (Vercel), trigger due sequence sends in a non-blocking background thread."""
+    def _bg_send():
+        if not _serverless_send_lock.acquire(blocking=False):
+            return
+        try:
+            process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=15, sync_sleep=False)
+        except Exception as exc:
+            print(f"[serverless-send] {exc}")
+        finally:
+            _serverless_send_lock.release()
+
+    threading.Thread(target=_bg_send, daemon=True).start()
 
 
 def _start_inline_worker() -> None:
@@ -714,7 +723,7 @@ def api_resume_sequence(sequence_id):
 def api_cron_send():
     """Endpoint for Vercel Cron or frontend polling to trigger sequence sends."""
     try:
-        res = process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=30)
+        res = process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=15, sync_sleep=False)
         return jsonify({"success": True, "processed": res})
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500

@@ -549,7 +549,7 @@ def _stop_enrollment(enrollment_id: ObjectId, status: str, sequence_id: ObjectId
     db.sequences.update_one({"_id": sequence_id}, {"$inc": inc_fields, "$set": {"updated_at": _utc_now_iso()}})
 
 
-def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dict[str, Any]:
+def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_sleep: bool = True) -> Dict[str, Any]:
     """Process all due sequence sends. Safe to call from cron every minute."""
     init_sequence_db()
     db = get_db()
@@ -810,7 +810,7 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50) -> Dic
                         {"$set": {"next_send_at": retry_at.isoformat(timespec="seconds"), "updated_at": _utc_now_iso()}},
                     )
 
-            if user_last_send.get(user_id):
+            if sync_sleep and user_last_send.get(user_id):
                 sleep_sec = random.randint(min_delay, max_delay)
                 time.sleep(min(sleep_sec, 30))
 
