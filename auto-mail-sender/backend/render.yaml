@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: auto-mail-sender
+    runtime: python
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: TRACKING_BASE_URL
+        sync: false           # Set to: https://your-app.onrender.com
+      - key: FRONTEND_URL
+        sync: false           # Set to: https://your-frontend.vercel.app
+      - key: FLASK_ENV
+        value: "production"
+      - key: ENABLE_INLINE_WORKER
+        value: "0"            # Worker service handles this separately
+
+  - type: worker
+    name: sequence-worker
+    runtime: python
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: python sequence_worker.py
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: TRACKING_BASE_URL
+        sync: false
+      - key: WORKER_INTERVAL
+        value: "60"
+      - key: WORKER_MAX_SENDS
+        value: "50"

@@ -1,0 +1,25 @@
+# Environment variables — NEVER commit these
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Uploads (user files — not for git)
+uploads/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+
+# OS
+.DS_Store
+Thumbs.db
