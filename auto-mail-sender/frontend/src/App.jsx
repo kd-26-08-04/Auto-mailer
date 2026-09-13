@@ -16,25 +16,22 @@ import { api } from './api';
 
 export function App() {
   const { user, loading } = useAuth();
-  const [authView, setAuthView] = useState('login'); // 'login' | 'register'
+  const [authView, setAuthView] = useState('login');
   const [currentView, setCurrentView] = useState('dashboard');
   const [dashboardSeqId, setDashboardSeqId] = useState(null);
 
-  // Theme State
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
-
-  // Toast State
   const [toasts, setToasts] = useState([]);
 
-  // Modals
   const [leadModalOpen, setLeadModalOpen] = useState(false);
   const [parsedLeads, setParsedLeads] = useState([]);
   const [onConfirmLeadCallback, setOnConfirmLeadCallback] = useState(null);
+  const [onSaveContactsCallback, setOnSaveContactsCallback] = useState(null);
+  const [leadModalMode, setLeadModalMode] = useState('launch');
   const [leadLaunching, setLeadLaunching] = useState(false);
+  const [leadSaving, setLeadSaving] = useState(false);
 
   const [credentialsModalOpen, setCredentialsModalOpen] = useState(false);
-
-  // Scanning state
   const [scanningReplies, setScanningReplies] = useState(false);
   const [createSeqTrigger, setCreateSeqTrigger] = useState(false);
 
@@ -79,18 +76,33 @@ export function App() {
     }
   };
 
-  const handleOpenLeadModal = (leads, onConfirm) => {
-    setParsedLeads(leads);
+  const handleOpenLeadModal = (leads, onConfirm, options = {}) => {
+    setParsedLeads(leads || []);
     setOnConfirmLeadCallback(() => onConfirm);
+    setOnSaveContactsCallback(options.onSave ? () => options.onSave : null);
+    setLeadModalMode(options.mode || 'launch');
     setLeadModalOpen(true);
   };
 
   const handleConfirmLeadStart = async () => {
-    if (onConfirmLeadCallback) {
-      setLeadLaunching(true);
+    if (!onConfirmLeadCallback) return;
+    setLeadLaunching(true);
+    try {
       await onConfirmLeadCallback(parsedLeads);
-      setLeadLaunching(false);
       setLeadModalOpen(false);
+    } finally {
+      setLeadLaunching(false);
+    }
+  };
+
+  const handleSaveContacts = async () => {
+    if (!onSaveContactsCallback) return;
+    setLeadSaving(true);
+    try {
+      await onSaveContactsCallback(parsedLeads);
+      setLeadModalOpen(false);
+    } finally {
+      setLeadSaving(false);
     }
   };
 
@@ -127,7 +139,6 @@ export function App() {
     );
   }
 
-
   return (
     <div className="app-layout">
       <ToastContainer toasts={toasts} />
@@ -146,7 +157,10 @@ export function App() {
           <DashboardView
             sequenceId={dashboardSeqId}
             onNavigateSequences={() => setCurrentView('sequences')}
-            onShowCreateSequence={() => setCreateSeqTrigger(true)}
+            onShowCreateSequence={() => {
+              setCreateSeqTrigger(true);
+              setCurrentView('sequences');
+            }}
           />
         )}
 
@@ -158,6 +172,7 @@ export function App() {
             onNavigateDashboard={() => setCurrentView('dashboard')}
             setDashboardSequenceId={setDashboardSeqId}
             createTriggered={createSeqTrigger}
+            onCreateHandled={() => setCreateSeqTrigger(false)}
           />
         )}
 
@@ -167,14 +182,16 @@ export function App() {
 
         {currentView === 'settings' && <SettingsView showToast={showToast} />}
 
-        {/* MODALS */}
         <LeadReviewModal
           isOpen={leadModalOpen}
           onClose={() => setLeadModalOpen(false)}
           leads={parsedLeads}
           setLeads={setParsedLeads}
           onConfirmStart={handleConfirmLeadStart}
+          onSaveContacts={onSaveContactsCallback ? handleSaveContacts : null}
           starting={leadLaunching}
+          saving={leadSaving}
+          mode={leadModalMode}
         />
 
         <CredentialsModal

@@ -92,4 +92,10 @@ export const api = {
   getAnalytics: (id) => request(id ? `/api/sequences/${id}/analytics` : "/api/analytics"),
 
   previewSequence: (id, formData) => request(`/api/sequences/${id}/preview`, { method: "POST", body: formData }),
+
+  uploadAttachment: (id, formData) =>
+    request(`/api/sequences/${id}/attachments`, { method: "POST", body: formData }),
+  listAttachments: (id) => request(`/api/sequences/${id}/attachments`),
+  deleteAttachment: (id, attachmentId) =>
+    request(`/api/sequences/${id}/attachments/${attachmentId}`, { method: "DELETE" }),
 };

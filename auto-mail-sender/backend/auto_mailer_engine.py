@@ -18,7 +18,7 @@ from datetime import datetime, date, time as dtime, timedelta
 from email.message import EmailMessage
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable
 
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 from bson.objectid import ObjectId
 from dotenv import load_dotenv
 
@@ -458,7 +458,14 @@ def _derive_delay_bounds(engine: EngineConfig) -> Tuple[int, int]:
     return min_delay, max_delay
 
 
-def _smtp_send(engine: EngineConfig, to_email: str, subject: str, body: str) -> None:
+def _smtp_send(
+    engine: EngineConfig,
+    to_email: str,
+    subject: str,
+    body: str,
+    memory_attachments: Optional[List[Tuple[str, bytes, str]]] = None,
+) -> None:
+    """Send HTML email. memory_attachments: list of (filename, bytes, content_type)."""
     msg = EmailMessage()
     msg["From"] = engine.from_email
     msg["To"] = to_email
@@ -480,6 +487,19 @@ def _smtp_send(engine: EngineConfig, to_email: str, subject: str, body: str) -> 
                 subtype=subtype,
                 filename=os.path.basename(path)
             )
+
+    for filename, raw, ctype in memory_attachments or []:
+        ctype = ctype or "application/octet-stream"
+        if "/" in ctype:
+            maintype, subtype = ctype.split("/", 1)
+        else:
+            maintype, subtype = "application", "octet-stream"
+        msg.add_attachment(
+            raw,
+            maintype=maintype,
+            subtype=subtype,
+            filename=filename or "attachment",
+        )
 
     context = ssl.create_default_context()
     with smtplib.SMTP(engine.smtp_host, engine.smtp_port, timeout=30) as server:

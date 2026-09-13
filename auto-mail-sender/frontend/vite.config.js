@@ -17,6 +17,7 @@ export default defineConfig({
       '/preview': { target: 'http://127.0.0.1:5001', changeOrigin: true },
       '/recipients': { target: 'http://127.0.0.1:5001', changeOrigin: true },
       '/check-replies': { target: 'http://127.0.0.1:5001', changeOrigin: true },
+      '/track': { target: 'http://127.0.0.1:5001', changeOrigin: true },
       '/tracking': { target: 'http://127.0.0.1:5001', changeOrigin: true },
     }
   }

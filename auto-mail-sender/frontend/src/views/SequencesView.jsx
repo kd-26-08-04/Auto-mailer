@@ -56,6 +56,7 @@ export const SequencesView = ({
   onNavigateDashboard,
   setDashboardSequenceId,
   createTriggered = false,
+  onCreateHandled,
 }) => {
   const [sequences, setSequences] = useState([]);
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'builder'
@@ -115,6 +116,7 @@ export const SequencesView = ({
   useEffect(() => {
     if (createTriggered) {
       showCreateSequence();
+      onCreateHandled?.();
     }
   }, [createTriggered]);
 
@@ -147,7 +149,23 @@ export const SequencesView = ({
       setCurrentSequenceId(seq.id);
       setSeqName(seq.name);
       setSeqStatus(seq.status);
-      setSteps(seq.steps || DEFAULT_STEPS);
+      let loadedSteps = seq.steps || DEFAULT_STEPS;
+      try {
+        const attRes = await api.listAttachments(seq.id);
+        if (attRes.success && attRes.attachments) {
+          loadedSteps = loadedSteps.map((step, idx) => {
+            const metas = attRes.attachments.filter((a) => a.step_index === idx);
+            return {
+              ...step,
+              attachment_ids: metas.map((a) => a.id),
+              _attachmentMeta: metas,
+            };
+          });
+        }
+      } catch (_) {
+        /* optional */
+      }
+      setSteps(loadedSteps);
       if (seq.settings) {
         setDailyLimit(seq.settings.daily_limit || 100);
         setDelaySec(seq.settings.delay_sec || 60);
@@ -253,9 +271,13 @@ export const SequencesView = ({
         res = await api.createSequence(payload);
       }
       if (res.success) {
-        setCurrentSequenceId(res.sequence.id);
+        // Always pin id immediately so subsequent saves update (never duplicate)
+        const id = res.sequence.id;
+        setCurrentSequenceId(id);
+        setSeqStatus(res.sequence.status || seqStatus);
         if (showMsg) showToast('Sequence saved', 'success');
-        return res.sequence.id;
+        await loadSequences();
+        return id;
       }
       showToast(res.error, 'error');
       return false;
@@ -263,6 +285,78 @@ export const SequencesView = ({
       showToast('Save failed: ' + e.message, 'error');
       return false;
     }
+  };
+
+  const openAddPeopleModal = (mode = 'launch') => {
+    const enrollOnly = mode === 'enroll';
+    onOpenLeadModal(
+      [],
+      async (validLeads) => {
+        const contacts = (validLeads || []).filter((r) => String(r.email || '').includes('@'));
+        if (!contacts.length) {
+          showToast('Add at least one contact with a valid email', 'error');
+          return;
+        }
+        const seqId = await saveSequence(false);
+        if (!seqId) return;
+
+        if (enrollOnly) {
+          try {
+            const res = await api.enrollSequence(seqId, { contacts });
+            if (res.success) {
+              showToast(`Added ${res.enrolled} contact(s). New contacts start at Email 1.`, 'success');
+              await loadSequences();
+              setDashboardSequenceId(seqId);
+            } else {
+              showToast(res.error, 'error');
+            }
+          } catch (err) {
+            showToast('Enroll failed: ' + err.message, 'error');
+          }
+          return;
+        }
+
+        try {
+          const actRes = await api.activateSequence(seqId, { contacts });
+          if (actRes.success) {
+            showToast(`Started! ${actRes.enrolled} contact(s) enrolled. Sends use your delay interval.`, 'success');
+            setSeqStatus('active');
+            setDashboardSequenceId(seqId);
+            await loadSequences();
+            onNavigateDashboard();
+          } else if (actRes.code === 'credentials_missing') {
+            onOpenCredentialsModal();
+          } else {
+            showToast(actRes.error, 'error');
+          }
+        } catch (err) {
+          showToast('Launch failed: ' + err.message, 'error');
+        }
+      },
+      {
+        mode: enrollOnly ? 'enroll' : 'launch',
+        onSave: async (validLeads) => {
+          const contacts = (validLeads || []).filter((r) => String(r.email || '').includes('@'));
+          if (!contacts.length) {
+            showToast('Add at least one contact with a valid email', 'error');
+            return;
+          }
+          const seqId = await saveSequence(false);
+          if (!seqId) return;
+          try {
+            const res = await api.enrollSequence(seqId, { contacts });
+            if (res.success) {
+              showToast(`Saved ${res.enrolled} contact(s). Sequence remains a draft until you start it.`, 'success');
+              await loadSequences();
+            } else {
+              showToast(res.error, 'error');
+            }
+          } catch (err) {
+            showToast('Save contacts failed: ' + err.message, 'error');
+          }
+        },
+      }
+    );
   };
 
   // Step reordering & editing
@@ -315,70 +409,91 @@ export const SequencesView = ({
     setSteps(steps.filter((_, i) => i !== index));
   };
 
-  // File Upload & Parsing
+  // File Upload & Parsing (legacy path — prefer Add People modal)
   const handleFileChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setSelectedFile(file);
-
-    const fd = new FormData();
-    fd.append('recipients_file', file);
-    showToast('Reading Excel/CSV contacts...', 'info');
-
-    try {
-      const res = await api.parseLeads(fd);
-      if (res.success && res.rows) {
-        onOpenLeadModal(res.rows, async (validLeads) => {
-          const seqId = await saveSequence(false);
-          if (!seqId) return;
-          try {
-            const actRes = await api.activateSequence(seqId, { contacts: validLeads });
-            if (actRes.success) {
-              showToast(`Launched! ${actRes.enrolled} contact(s) enrolled. Backend sending now.`, 'success');
-              setDashboardSequenceId(seqId);
-              onNavigateDashboard();
-            } else if (actRes.code === 'credentials_missing') {
-              onOpenCredentialsModal();
-            } else {
-              showToast(actRes.error, 'error');
-            }
-          } catch (err) {
-            showToast('Launch failed: ' + err.message, 'error');
-          }
-        });
-      } else {
-        showToast(res.error || 'Failed to parse file', 'error');
-      }
-    } catch (err) {
-      showToast('File parsing failed: ' + err.message, 'error');
-    }
+    e.target.value = '';
+    openAddPeopleModal(seqStatus === 'active' || seqStatus === 'paused' ? 'enroll' : 'launch');
   };
 
   const handleLaunchSequence = async () => {
-    const seqId = await saveSequence(false);
-    if (!seqId) return;
+    openAddPeopleModal('launch');
+  };
 
-    if (!selectedFile) {
-      showToast('Upload an Excel (.xls/.xlsx) or CSV file with contacts first', 'error');
+  const handleDeleteSequence = async (id, e) => {
+    e?.stopPropagation?.();
+    if (!window.confirm('Delete this sequence? Scheduled emails will stop. This cannot be undone from the list.')) {
       return;
     }
-
-    const fd = new FormData();
-    fd.append('recipients_csv', selectedFile);
-
     try {
-      const res = await api.activateSequence(seqId, fd);
+      const res = await api.deleteSequence(id);
       if (res.success) {
-        showToast(`Launched! ${res.enrolled} contacts enrolled. Backend will send automatically.`, 'success');
-        setDashboardSequenceId(seqId);
-        onNavigateDashboard();
-      } else if (res.code === 'credentials_missing') {
-        onOpenCredentialsModal();
+        showToast('Sequence deleted', 'success');
+        if (currentSequenceId === id) {
+          setViewMode('list');
+          setCurrentSequenceId(null);
+        }
+        await loadSequences();
       } else {
         showToast(res.error, 'error');
       }
     } catch (err) {
-      showToast('Launch failed: ' + err.message, 'error');
+      showToast('Delete failed: ' + err.message, 'error');
+    }
+  };
+
+  const handleUploadAttachment = async (stepIndex, file) => {
+    if (!file) return;
+    let seqId = currentSequenceId;
+    if (!seqId) {
+      seqId = await saveSequence(false);
+      if (!seqId) return;
+    }
+    if (seqStatus === 'active') {
+      showToast('Pause the sequence before adding attachments', 'warning');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('step_index', String(stepIndex));
+    try {
+      const res = await api.uploadAttachment(seqId, fd);
+      if (res.success) {
+        showToast('Attachment saved', 'success');
+        const updated = [...steps];
+        const ids = [...(updated[stepIndex].attachment_ids || [])];
+        ids.push(res.attachment.id);
+        updated[stepIndex] = { ...updated[stepIndex], attachment_ids: ids, _attachmentMeta: [...(updated[stepIndex]._attachmentMeta || []), res.attachment] };
+        setSteps(updated);
+      } else {
+        showToast(res.error, 'error');
+      }
+    } catch (err) {
+      showToast('Upload failed: ' + err.message, 'error');
+    }
+  };
+
+  const handleRemoveAttachment = async (stepIndex, attachmentId) => {
+    if (!currentSequenceId) return;
+    if (seqStatus === 'active') {
+      showToast('Pause the sequence before removing attachments', 'warning');
+      return;
+    }
+    try {
+      const res = await api.deleteAttachment(currentSequenceId, attachmentId);
+      if (res.success) {
+        const updated = [...steps];
+        updated[stepIndex] = {
+          ...updated[stepIndex],
+          attachment_ids: (updated[stepIndex].attachment_ids || []).filter((id) => id !== attachmentId),
+          _attachmentMeta: (updated[stepIndex]._attachmentMeta || []).filter((a) => a.id !== attachmentId),
+        };
+        setSteps(updated);
+        showToast('Attachment removed', 'success');
+      } else {
+        showToast(res.error, 'error');
+      }
+    } catch (err) {
+      showToast('Remove failed: ' + err.message, 'error');
     }
   };
 
@@ -411,25 +526,13 @@ export const SequencesView = ({
   const handlePreview = async () => {
     const seqId = await saveSequence(false);
     if (!seqId) return;
+    showToast('Save contacts via Add People, then use Dashboard to monitor sends.', 'info');
+  };
 
-    if (!selectedFile) {
-      showToast('Upload CSV to preview', 'error');
-      return;
-    }
-
-    const fd = new FormData();
-    fd.append('recipients_csv', selectedFile);
-
-    try {
-      const res = await api.previewSequence(seqId, fd);
-      if (res.success) {
-        setPreviewData(res.preview);
-      } else {
-        showToast(res.error, 'error');
-      }
-    } catch (e) {
-      showToast('Preview failed', 'error');
-    }
+  const statusBadgeClass = (status) => {
+    if (status === 'active') return 'badge-running';
+    if (status === 'paused') return 'badge-idle';
+    return 'badge-idle';
   };
 
   return (
@@ -438,7 +541,7 @@ export const SequencesView = ({
         <div id="sequences-list-view">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <p style={{ color: 'var(--text-muted)' }}>
-              Build multi-step email sequences. Upload CSV contacts and the backend handles sending.
+              Build multi-step email sequences. Add people via upload or manual entry — each contact progresses independently.
             </p>
             <button className="btn-primary" style={{ width: 'auto' }} onClick={showCreateSequence}>
               <Plus size={16} style={{ marginRight: 6 }} /> New Sequence
@@ -447,16 +550,14 @@ export const SequencesView = ({
           <div className="sequences-grid">
             {sequences.length === 0 ? (
               <div className="card" style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                No sequences yet. Click "New Sequence" to start.
+                No sequences yet. Click &quot;New Sequence&quot; to start.
               </div>
             ) : (
               sequences.map((s) => (
-                <div key={s.id} className="card sequence-card" onClick={() => openSequence(s.id)}>
+                <div key={s.id} className="card sequence-card" onClick={() => openSequence(s.id)} style={{ cursor: 'pointer' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <h3 style={{ fontSize: '1rem' }}>{s.name}</h3>
-                    <span className={`badge ${s.status === 'active' ? 'badge-running' : 'badge-idle'}`}>
-                      {s.status}
-                    </span>
+                    <span className={`badge ${statusBadgeClass(s.status)}`}>{s.status}</span>
                   </div>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.5rem 0' }}>
                     {s.steps?.length || 0} step(s) · {s.stats?.enrolled || 0} enrolled
@@ -464,6 +565,29 @@ export const SequencesView = ({
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     Created {s.created_at ? new Date(s.created_at).toLocaleDateString() : ''}
                   </p>
+                  <div
+                    style={{ display: 'flex', gap: '0.4rem', marginTop: '0.75rem', flexWrap: 'wrap' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ width: 'auto', fontSize: '0.75rem', padding: '0.35rem 0.6rem' }}
+                      onClick={() => {
+                        openSequence(s.id).then(() => openAddPeopleModal(s.status === 'draft' ? 'launch' : 'enroll'));
+                      }}
+                    >
+                      <UserPlus size={12} style={{ marginRight: 4 }} /> Add people
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ width: 'auto', fontSize: '0.75rem', padding: '0.35rem 0.6rem' }}
+                      onClick={(e) => handleDeleteSequence(s.id, e)}
+                    >
+                      <Trash2 size={12} style={{ marginRight: 4 }} /> Delete
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -501,7 +625,7 @@ export const SequencesView = ({
                 padding: '0.25rem 0',
               }}
             />
-            <span className={`badge ${seqStatus === 'active' ? 'badge-running' : 'badge-idle'}`}>
+            <span className={`badge ${statusBadgeClass(seqStatus)}`}>
               {seqStatus}
             </span>
           </div>
@@ -654,6 +778,41 @@ export const SequencesView = ({
                           }}
                         />
                       </div>
+
+                      <div className="form-group">
+                        <label>Attachments</label>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                          {(step._attachmentMeta || []).map((att) => (
+                            <span
+                              key={att.id}
+                              className="badge badge-idle"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                            >
+                              {att.filename}
+                              <button
+                                type="button"
+                                className="btn-icon btn-icon-sm"
+                                onClick={() => handleRemoveAttachment(index, att.id)}
+                                title="Remove"
+                              >
+                                <X size={12} />
+                              </button>
+                            </span>
+                          ))}
+                          <label className="btn-secondary" style={{ width: 'auto', fontSize: '0.8rem', cursor: 'pointer', margin: 0 }}>
+                            Upload file
+                            <input
+                              type="file"
+                              style={{ display: 'none' }}
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) handleUploadAttachment(index, f);
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
@@ -669,6 +828,9 @@ export const SequencesView = ({
                 <div className="form-group">
                   <label>Delay Between Emails (sec)</label>
                   <input type="number" min="1" value={delaySec} onChange={(e) => setDelaySec(e.target.value)} />
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    Exact wait between consecutive sends (no random jitter).
+                  </p>
                 </div>
                 <div className="form-group">
                   <label>Daily Limit</label>
@@ -708,19 +870,35 @@ export const SequencesView = ({
               </div>
             </div>
 
-            {/* CONTACTS FILE DROPZONE */}
+            {/* CONTACTS */}
             <div className="card">
               <h2>
-                <Users size={20} style={{ display: 'inline', marginRight: 8 }} /> Contacts (CSV / Excel)
+                <Users size={20} style={{ display: 'inline', marginRight: 8 }} /> Add People
               </h2>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0.5rem 0 1rem' }}>
-                Required columns: <code>email</code>. Optional: <code>first_name</code>, <code>company</code>, <code>consent</code>, etc.
+                Upload a CSV/Excel file or enter contact details. New contacts always start at Email 1.
+                Use <strong>Save contacts</strong> to keep a draft, or <strong>Start</strong> to begin sending.
               </p>
-              <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} />
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ width: 'auto' }}
+                onClick={() =>
+                  openAddPeopleModal(seqStatus === 'active' || seqStatus === 'paused' ? 'enroll' : 'launch')
+                }
+              >
+                <UserPlus size={16} style={{ marginRight: 6 }} /> Add people
+              </button>
             </div>
 
             <div className="grid-2">
-              <button type="button" className="btn-secondary" onClick={() => saveSequence(true)}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => saveSequence(true)}
+                disabled={seqStatus === 'active'}
+                title={seqStatus === 'active' ? 'Pause before editing' : ''}
+              >
                 <Save size={16} style={{ marginRight: 6 }} /> Save Draft
               </button>
               <button type="button" className="btn-secondary" onClick={handlePreview}>
@@ -738,7 +916,7 @@ export const SequencesView = ({
                 <Rocket size={16} style={{ marginRight: 6 }} /> Launch Sequence
               </button>
             ) : (
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
                 {seqStatus === 'active' && (
                   <button type="button" className="btn-danger" style={{ flex: 1 }} onClick={handlePause}>
                     <Pause size={16} style={{ marginRight: 6 }} /> Pause
@@ -749,7 +927,26 @@ export const SequencesView = ({
                     <Play size={16} style={{ marginRight: 6 }} /> Resume
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ flex: 1 }}
+                  onClick={() => openAddPeopleModal('enroll')}
+                >
+                  <UserPlus size={16} style={{ marginRight: 6 }} /> Add people
+                </button>
               </div>
+            )}
+
+            {currentSequenceId && (
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ marginTop: '0.75rem', color: 'var(--danger)' }}
+                onClick={(e) => handleDeleteSequence(currentSequenceId, e)}
+              >
+                <Trash2 size={16} style={{ marginRight: 6 }} /> Delete Sequence
+              </button>
             )}
 
             {/* PREVIEW RESULTS */}

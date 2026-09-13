@@ -33,7 +33,7 @@ export const DashboardView = ({ onNavigateSequences, onShowCreateSequence, seque
   const seq = dashboardData?.sequence;
   const stats = dashboardData?.stats || {};
   const lists = dashboardData?.lists || {};
-  const logs = statusData?.logs || [];
+  const logs = dashboardData?.logs || statusData?.logs || [];
 
   const recipientRow = (rec, idx) => (
     <div key={idx} className="recipient-item">

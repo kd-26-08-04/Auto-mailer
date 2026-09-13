@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import logging
+import mimetypes
 import os
-import random
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+from bson.binary import Binary
 from bson.objectid import ObjectId
+from pymongo import ReturnDocument
 
 from auto_mailer_engine import (
     DailyWindow,
     EngineConfig,
-    _derive_delay_bounds,
     _is_transient_error,
     _is_truthy_consent,
     _local_now,
@@ -26,6 +28,19 @@ from auto_mailer_engine import (
     get_db,
     init_db,
     rewrite_links,
+)
+
+logger = logging.getLogger(__name__)
+
+ALLOWED_SEQUENCE_STATUSES = frozenset({"draft", "active", "paused", "completed", "deleted"})
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+ALLOWED_ATTACHMENT_MIME_PREFIXES = (
+    "image/",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.",
+    "text/plain",
+    "text/csv",
 )
 
 
@@ -41,7 +56,8 @@ def init_sequence_db() -> None:
         [("enrollment_id", 1), ("step_index", 1)], unique=True
     )
     db.sequence_send_log.create_index([("user_id", 1), ("day_key", 1), ("status", 1)])
-
+    db.sequence_attachments.create_index([("sequence_id", 1), ("step_index", 1)])
+    db.sequence_attachments.create_index([("user_id", 1), ("sequence_id", 1)])
 
 def _parse_window(settings: Dict[str, Any]) -> DailyWindow:
     start_str = settings.get("window_start", "09:00")
@@ -82,6 +98,14 @@ def _normalize_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if idx == 0:
             delay_days = 0
             delay_hours = 0
+        attachment_ids = []
+        raw_ids = step.get("attachment_ids") or []
+        if isinstance(raw_ids, list):
+            for aid in raw_ids:
+                aid_str = str(aid).strip()
+                if aid_str:
+                    attachment_ids.append(aid_str)
+
         normalized.append(
             {
                 "step_index": idx,
@@ -90,6 +114,7 @@ def _normalize_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "body": body,
                 "delay_days": delay_days,
                 "delay_hours": delay_hours,
+                "attachment_ids": attachment_ids,
             }
         )
     return normalized
@@ -121,6 +146,7 @@ def _normalize_settings(settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     delay_sec = int(settings.get("delay_sec", 60))
     if daily_limit <= 0 or delay_sec <= 0:
         raise ValueError("Daily limit and delay must be positive integers.")
+    # Exact user interval — no random jitter between sequence sends.
     return {
         "daily_limit": daily_limit,
         "delay_sec": delay_sec,
@@ -128,8 +154,8 @@ def _normalize_settings(settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "window_end": settings.get("window_end", "17:00"),
         "consent_required": bool(settings.get("consent_required", True)),
         "enable_reply_tracking": bool(settings.get("enable_reply_tracking", True)),
-        "min_delay_sec": settings.get("min_delay_sec"),
-        "max_delay_sec": settings.get("max_delay_sec"),
+        "min_delay_sec": delay_sec,
+        "max_delay_sec": delay_sec,
     }
 
 
@@ -144,7 +170,19 @@ def _seq_to_dict(doc: Dict[str, Any]) -> Dict[str, Any]:
         "created_at": doc.get("created_at"),
         "updated_at": doc.get("updated_at"),
         "activated_at": doc.get("activated_at"),
+        "deleted_at": doc.get("deleted_at"),
     }
+
+
+def _assert_not_deleted(seq: Dict[str, Any]) -> None:
+    if seq.get("status") == "deleted":
+        raise ValueError("Sequence has been deleted.")
+
+
+def _log_event(event: str, **fields: Any) -> None:
+    parts = " ".join(f"{k}={v}" for k, v in fields.items() if v is not None)
+    logger.info("%s %s", event, parts)
+    print(f"[{event}] {parts}")
 
 
 def create_sequence(
@@ -170,6 +208,7 @@ def create_sequence(
     }
     res = get_db().sequences.insert_one(doc)
     doc["_id"] = res.inserted_id
+    _log_event("sequence.created", sequence_id=str(doc["_id"]), user_id=user_id)
     return _seq_to_dict(doc)
 
 
@@ -185,6 +224,7 @@ def update_sequence(
     seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
     if not seq:
         raise ValueError("Sequence not found.")
+    _assert_not_deleted(seq)
     if seq["status"] == "active":
         raise ValueError("Pause the sequence before editing.")
 
@@ -195,6 +235,12 @@ def update_sequence(
             raise ValueError("Sequence name is required.")
         update["name"] = name
     if steps is not None:
+        # Preserve attachment_ids from existing steps when client omits them
+        existing_by_idx = {int(s.get("step_index", i)): s for i, s in enumerate(seq.get("steps") or [])}
+        for i, step in enumerate(steps):
+            if not step.get("attachment_ids") and i in existing_by_idx:
+                step = {**step, "attachment_ids": existing_by_idx[i].get("attachment_ids") or []}
+                steps[i] = step
         update["steps"] = _normalize_steps(steps)
     if settings is not None:
         update["settings"] = _normalize_settings(settings)
@@ -211,7 +257,7 @@ def update_sequence(
             now = _local_now()
             for e in active_enrollments:
                 step_idx = int(e.get("current_step", 0))
-                if step_idx == 0:
+                if step_idx == 0 and not e.get("last_sent_at"):
                     first_send = _schedule_first_send(norm_settings)
                     new_next = first_send.isoformat(timespec="seconds")
                 else:
@@ -233,12 +279,15 @@ def update_sequence(
     except Exception as exc:
         print(f"[update_sequence warning] Failed to update enrollment send times: {exc}")
 
+    _log_event("sequence.updated", sequence_id=sequence_id, user_id=user_id, status=updated.get("status"))
     return _seq_to_dict(updated)
 
 
 def list_sequences(user_id: str) -> List[Dict[str, Any]]:
     init_sequence_db()
-    docs = get_db().sequences.find({"user_id": user_id}).sort("created_at", -1)
+    docs = get_db().sequences.find(
+        {"user_id": user_id, "status": {"$ne": "deleted"}}
+    ).sort("created_at", -1)
     return [_seq_to_dict(d) for d in docs]
 
 
@@ -247,6 +296,7 @@ def get_sequence(user_id: str, sequence_id: str) -> Dict[str, Any]:
     doc = get_db().sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
     if not doc:
         raise ValueError("Sequence not found.")
+    _assert_not_deleted(doc)
     return _seq_to_dict(doc)
 
 
@@ -293,12 +343,13 @@ def _refresh_due_enrollment_times(sequence: Dict[str, Any]) -> int:
 
 
 def enroll_from_data(user_id: str, sequence_id: str, rows: List[Dict[str, Any]]) -> int:
-    """Import list of contact dicts into a sequence. Returns number enrolled."""
+    """Import list of contact dicts into a sequence. Returns number newly enrolled at Email 1."""
     init_sequence_db()
     db = get_db()
     seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
     if not seq:
         raise ValueError("Sequence not found.")
+    _assert_not_deleted(seq)
 
     if not rows:
         raise ValueError("No valid recipients provided.")
@@ -323,18 +374,16 @@ def enroll_from_data(user_id: str, sequence_id: str, rows: List[Dict[str, Any]])
         if existing:
             if existing["status"] in ("stopped_replied", "stopped_unsubscribed"):
                 continue
-            db.enrollments.update_one(
-                {"_id": existing["_id"]},
-                {
-                    "$set": {
-                        "data": row,
-                        "email": email,
-                        "status": "active" if existing["status"] == "stopped_failed" else existing["status"],
-                        "next_send_at": first_send_at.isoformat(timespec="seconds") if existing["status"] == "stopped_failed" else existing.get("next_send_at"),
-                        "updated_at": _utc_now_iso(),
-                    }
-                },
-            )
+            # Never reset progress of an in-progress enrollment
+            patch: Dict[str, Any] = {
+                "data": row,
+                "email": email,
+                "updated_at": _utc_now_iso(),
+            }
+            if existing["status"] == "stopped_failed":
+                patch["status"] = "active"
+                patch["next_send_at"] = first_send_at.isoformat(timespec="seconds")
+            db.enrollments.update_one({"_id": existing["_id"]}, {"$set": patch})
             continue
 
         db.enrollments.insert_one(
@@ -353,6 +402,13 @@ def enroll_from_data(user_id: str, sequence_id: str, rows: List[Dict[str, Any]])
             }
         )
         enrolled += 1
+        _log_event(
+            "contact.enrolled",
+            sequence_id=sequence_id,
+            user_id=user_id,
+            email=email,
+            current_step=0,
+        )
 
     if enrolled:
         db.sequences.update_one(
@@ -385,6 +441,13 @@ def activate_sequence(user_id: str, sequence_id: str, csv_path: Optional[str] = 
     seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
     if not seq:
         raise ValueError("Sequence not found.")
+    _assert_not_deleted(seq)
+    if seq.get("status") == "active":
+        # Idempotent re-activate: enroll any new contacts, keep same sequence
+        pass
+    elif seq.get("status") not in ("draft", "paused", "completed"):
+        raise ValueError(f"Cannot activate sequence in status '{seq.get('status')}'.")
+
     if not seq.get("steps"):
         raise ValueError("Add at least one email step before activating.")
 
@@ -397,15 +460,20 @@ def activate_sequence(user_id: str, sequence_id: str, csv_path: Optional[str] = 
     active_count = db.enrollments.count_documents(
         {"sequence_id": ObjectId(sequence_id), "status": "active"}
     )
-    if active_count == 0 and enrolled == 0:
+    if active_count == 0:
         raise ValueError("Upload a file or provide contacts before activating.")
 
     now = _utc_now_iso()
     # Recalculate step 0 send time so starting sequence sends immediately inside working hours
     first_send = _schedule_first_send(seq["settings"]).isoformat(timespec="seconds")
     db.enrollments.update_many(
-        {"sequence_id": ObjectId(sequence_id), "status": "active", "current_step": 0},
-        {"$set": {"next_send_at": first_send, "updated_at": now}}
+        {
+            "sequence_id": ObjectId(sequence_id),
+            "status": "active",
+            "current_step": 0,
+            "last_sent_at": None,
+        },
+        {"$set": {"next_send_at": first_send, "updated_at": now}},
     )
 
     db.sequences.update_one(
@@ -414,11 +482,18 @@ def activate_sequence(user_id: str, sequence_id: str, csv_path: Optional[str] = 
     )
     seq = db.sequences.find_one({"_id": ObjectId(sequence_id)})
     rescheduled = _refresh_due_enrollment_times(seq) if seq else 0
+    _log_event(
+        "sequence.started",
+        sequence_id=sequence_id,
+        user_id=user_id,
+        enrolled=enrolled,
+        active_contacts=active_count,
+    )
     return {
         "sequence_id": sequence_id,
         "status": "active",
         "enrolled": enrolled,
-        "active_contacts": active_count + enrolled,
+        "active_contacts": active_count,
         "rescheduled": rescheduled,
     }
 
@@ -431,6 +506,7 @@ def pause_sequence(user_id: str, sequence_id: str) -> Dict[str, Any]:
     )
     if res.matched_count == 0:
         raise ValueError("Active sequence not found.")
+    _log_event("sequence.paused", sequence_id=sequence_id, user_id=user_id)
     return {"sequence_id": sequence_id, "status": "paused"}
 
 
@@ -466,19 +542,30 @@ def resume_sequence(user_id: str, sequence_id: str) -> Dict[str, Any]:
     reactivated = retry_failed_contacts(user_id, sequence_id)
     seq = db.sequences.find_one({"_id": seq_oid, "user_id": user_id})
     rescheduled = _refresh_due_enrollment_times(seq) if seq else 0
+    _log_event("sequence.resumed", sequence_id=sequence_id, user_id=user_id, reactivated=reactivated)
     return {"sequence_id": sequence_id, "status": "active", "rescheduled": rescheduled, "reactivated": reactivated}
 
 
 def delete_sequence(user_id: str, sequence_id: str) -> None:
+    """Soft-delete: stop future sends; idempotent if already deleted."""
+    init_sequence_db()
     db = get_db()
     seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
     if not seq:
         raise ValueError("Sequence not found.")
-    if seq["status"] == "active":
-        raise ValueError("Pause the sequence before deleting.")
-    db.enrollments.delete_many({"sequence_id": ObjectId(sequence_id)})
-    db.sequence_send_log.delete_many({"sequence_id": ObjectId(sequence_id)})
-    db.sequences.delete_one({"_id": ObjectId(sequence_id)})
+    if seq.get("status") == "deleted":
+        return
+    now = _utc_now_iso()
+    db.sequences.update_one(
+        {"_id": ObjectId(sequence_id)},
+        {"$set": {"status": "deleted", "deleted_at": now, "updated_at": now}},
+    )
+    # Clear next_send_at so orphaned jobs cannot fire if status check races
+    db.enrollments.update_many(
+        {"sequence_id": ObjectId(sequence_id), "status": "active"},
+        {"$set": {"next_send_at": None, "updated_at": now}},
+    )
+    _log_event("sequence.deleted", sequence_id=sequence_id, user_id=user_id)
 
 
 def _build_engine_config(user_id: str, sequence: Dict[str, Any], tracking_base_url: str = "") -> EngineConfig:
@@ -493,6 +580,7 @@ def _build_engine_config(user_id: str, sequence: Dict[str, Any], tracking_base_u
 
     settings = sequence["settings"]
     window = _parse_window(settings)
+    delay_sec = int(settings["delay_sec"])
     return EngineConfig(
         user_id=user_id,
         batch_id=f"seq-{sequence['_id']}",
@@ -501,11 +589,13 @@ def _build_engine_config(user_id: str, sequence: Dict[str, Any], tracking_base_u
         smtp_port=587,
         smtp_app_password=app_password,
         daily_limit=settings["daily_limit"],
-        delay_sec=settings["delay_sec"],
+        delay_sec=delay_sec,
         window=window,
         consent_required=settings.get("consent_required", True),
-        min_delay_sec=settings.get("min_delay_sec"),
-        max_delay_sec=settings.get("max_delay_sec"),
+        # Exact interval — never derive random jitter for sequences
+        min_delay_sec=delay_sec,
+        max_delay_sec=delay_sec,
+        jitter_factor=0.0,
         tracking_base_url=tracking_base_url,
         enable_reply_tracking=settings.get("enable_reply_tracking", True),
         imap_host=user.get("imap_host", "imap.gmail.com"),
@@ -513,6 +603,196 @@ def _build_engine_config(user_id: str, sequence: Dict[str, Any], tracking_base_u
         imap_username=user.get("imap_username", "").strip() or from_email,
         imap_password=user.get("imap_password", "").strip() or app_password,
     )
+
+
+def _attachment_meta(doc: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": str(doc["_id"]),
+        "filename": doc.get("filename"),
+        "content_type": doc.get("content_type"),
+        "size": doc.get("size", 0),
+        "sequence_id": str(doc.get("sequence_id")),
+        "step_index": int(doc.get("step_index", 0)),
+        "created_at": doc.get("created_at"),
+    }
+
+
+def store_step_attachment(
+    user_id: str,
+    sequence_id: str,
+    step_index: int,
+    filename: str,
+    content_type: str,
+    file_bytes: bytes,
+) -> Dict[str, Any]:
+    init_sequence_db()
+    db = get_db()
+    seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
+    if not seq:
+        raise ValueError("Sequence not found.")
+    _assert_not_deleted(seq)
+    if seq.get("status") == "active":
+        raise ValueError("Pause the sequence before adding attachments.")
+
+    steps = seq.get("steps") or []
+    if step_index < 0 or step_index >= len(steps):
+        raise ValueError("Invalid step index.")
+
+    if not file_bytes:
+        raise ValueError("Empty file.")
+    if len(file_bytes) > MAX_ATTACHMENT_BYTES:
+        raise ValueError(f"File too large. Max {MAX_ATTACHMENT_BYTES // (1024 * 1024)}MB.")
+
+    safe_name = os.path.basename(filename or "attachment").strip() or "attachment"
+    ctype = (content_type or "").strip() or mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+    if not any(ctype.startswith(p) for p in ALLOWED_ATTACHMENT_MIME_PREFIXES):
+        raise ValueError(f"File type not allowed: {ctype}")
+
+    doc = {
+        "user_id": user_id,
+        "sequence_id": ObjectId(sequence_id),
+        "step_index": int(step_index),
+        "filename": safe_name,
+        "content_type": ctype,
+        "size": len(file_bytes),
+        "data": Binary(file_bytes),
+        "created_at": _utc_now_iso(),
+    }
+    res = db.sequence_attachments.insert_one(doc)
+    att_id = str(res.inserted_id)
+
+    attachment_ids = list(steps[step_index].get("attachment_ids") or [])
+    attachment_ids.append(att_id)
+    steps[step_index]["attachment_ids"] = attachment_ids
+    db.sequences.update_one(
+        {"_id": ObjectId(sequence_id)},
+        {"$set": {"steps": steps, "updated_at": _utc_now_iso()}},
+    )
+    _log_event(
+        "attachment.uploaded",
+        sequence_id=sequence_id,
+        step_index=step_index,
+        attachment_id=att_id,
+        size=len(file_bytes),
+    )
+    return _attachment_meta({**doc, "_id": res.inserted_id})
+
+
+def list_sequence_attachments(user_id: str, sequence_id: str) -> List[Dict[str, Any]]:
+    init_sequence_db()
+    db = get_db()
+    seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
+    if not seq:
+        raise ValueError("Sequence not found.")
+    docs = db.sequence_attachments.find(
+        {"sequence_id": ObjectId(sequence_id), "user_id": user_id},
+        {"data": 0},
+    ).sort("created_at", 1)
+    return [_attachment_meta(d) for d in docs]
+
+
+def delete_step_attachment(user_id: str, sequence_id: str, attachment_id: str) -> None:
+    init_sequence_db()
+    db = get_db()
+    seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
+    if not seq:
+        raise ValueError("Sequence not found.")
+    _assert_not_deleted(seq)
+    if seq.get("status") == "active":
+        raise ValueError("Pause the sequence before removing attachments.")
+
+    att = db.sequence_attachments.find_one(
+        {"_id": ObjectId(attachment_id), "sequence_id": ObjectId(sequence_id), "user_id": user_id}
+    )
+    if not att:
+        return  # idempotent
+
+    db.sequence_attachments.delete_one({"_id": ObjectId(attachment_id)})
+    steps = seq.get("steps") or []
+    for step in steps:
+        ids = [str(x) for x in (step.get("attachment_ids") or []) if str(x) != attachment_id]
+        step["attachment_ids"] = ids
+    db.sequences.update_one(
+        {"_id": ObjectId(sequence_id)},
+        {"$set": {"steps": steps, "updated_at": _utc_now_iso()}},
+    )
+    _log_event("attachment.deleted", sequence_id=sequence_id, attachment_id=attachment_id)
+
+
+def load_step_attachments_for_send(sequence_id: ObjectId, step: Dict[str, Any]) -> List[Tuple[str, bytes, str]]:
+    """Return (filename, bytes, content_type) for SMTP. Missing files are skipped with a log."""
+    db = get_db()
+    results: List[Tuple[str, bytes, str]] = []
+    for aid in step.get("attachment_ids") or []:
+        try:
+            doc = db.sequence_attachments.find_one({"_id": ObjectId(str(aid)), "sequence_id": sequence_id})
+        except Exception:
+            doc = None
+        if not doc or not doc.get("data"):
+            _log_event("attachment.loaded", sequence_id=str(sequence_id), attachment_id=str(aid), ok=False)
+            continue
+        data = doc["data"]
+        raw = bytes(data) if not isinstance(data, (bytes, bytearray)) else bytes(data)
+        results.append(
+            (
+                doc.get("filename") or "attachment",
+                raw,
+                doc.get("content_type") or "application/octet-stream",
+            )
+        )
+        _log_event(
+            "attachment.loaded",
+            sequence_id=str(sequence_id),
+            attachment_id=str(aid),
+            ok=True,
+            size=len(raw),
+        )
+    return results
+
+
+def record_email_open(send_log_id: str) -> Optional[Dict[str, Any]]:
+    """Record an open against a specific sequence_send_log document. Idempotent first-open."""
+    init_sequence_db()
+    db = get_db()
+    try:
+        oid = ObjectId(send_log_id)
+    except Exception:
+        return None
+    log = db.sequence_send_log.find_one({"_id": oid})
+    if not log:
+        return None
+    now = _utc_now_iso()
+    first_open = not bool(log.get("opened"))
+    update: Dict[str, Any] = {"$inc": {"open_count": 1}, "$set": {"updated_at": now}}
+    if first_open:
+        update["$set"]["opened"] = 1
+        update["$set"]["opened_at"] = now
+    db.sequence_send_log.update_one({"_id": oid}, update)
+
+    # Compatibility update for legacy send_log keyed by day
+    if log.get("recipient_id") is not None and log.get("day_key"):
+        db.send_log.update_one(
+            {"recipient_id": log["recipient_id"], "day_key": log["day_key"]},
+            {
+                "$set": {"opened": 1, "opened_at": now if first_open else log.get("opened_at", now)},
+                "$inc": {"open_count": 1},
+            },
+        )
+    _log_event(
+        "email.opened",
+        send_log_id=send_log_id,
+        sequence_id=str(log.get("sequence_id")),
+        enrollment_id=str(log.get("enrollment_id")),
+        step_index=log.get("step_index"),
+        first_open=first_open,
+    )
+    return {
+        "send_log_id": send_log_id,
+        "sequence_id": str(log.get("sequence_id")),
+        "enrollment_id": str(log.get("enrollment_id")),
+        "step_index": log.get("step_index"),
+        "first_open": first_open,
+    }
 
 
 def _count_user_sends_today(user_id: str, day: str) -> int:
@@ -608,7 +888,8 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
             skip_notes.append(f"{seq.get('name', sequence_id)}: {exc}")
             continue
 
-        min_delay, max_delay = _derive_delay_bounds(engine)
+        # Exact user-configured delay between sends (no random jitter)
+        delay_sec = int(settings.get("delay_sec", 60))
 
         due_enrollments = list(
             db.enrollments.find(
@@ -635,10 +916,16 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
             if user_sent_today[user_id] >= settings["daily_limit"]:
                 break
 
+            # Re-check sequence still active (pause/delete race)
+            live_seq = db.sequences.find_one({"_id": sequence_id}, {"status": 1})
+            if not live_seq or live_seq.get("status") != "active":
+                skip_notes.append(f"{seq.get('name', sequence_id)}: no longer active")
+                break
+
             last = user_last_send.get(user_id)
             if last:
-                elapsed = (now - last).total_seconds()
-                if elapsed < min_delay:
+                elapsed = (_local_now() - last).total_seconds()
+                if elapsed < delay_sec:
                     break
 
             summary["processed"] += 1
@@ -670,13 +957,6 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
             body = _render_template(step["body"], data_dict).strip()
             recipient_id_str = str(recipient_id)
 
-            if tracking_base_url:
-                body = rewrite_links(body, recipient_id_str, day, tracking_base_url)
-                body += (
-                    f'<img src="{tracking_base_url}/track/open/{recipient_id_str}/{day}" '
-                    f'width="1" height="1" style="display:none;" />'
-                )
-
             log_filter = {"enrollment_id": enrollment_id, "step_index": step_index}
             existing_log = db.sequence_send_log.find_one(log_filter)
             if existing_log and existing_log.get("status") == "sent":
@@ -698,27 +978,62 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                 summary["skipped"] += 1
                 continue
 
+            # Upsert pending log first so we have a stable id for the tracking pixel
+            pending_log = db.sequence_send_log.find_one_and_update(
+                log_filter,
+                {
+                    "$set": {
+                        "user_id": user_id,
+                        "sequence_id": sequence_id,
+                        "recipient_id": recipient_id,
+                        "email": enrollment["email"],
+                        "step_index": step_index,
+                        "day_key": day,
+                        "status": "pending",
+                        "updated_at": _utc_now_iso(),
+                    },
+                    "$setOnInsert": {
+                        "created_at": _utc_now_iso(),
+                        "opened": 0,
+                        "open_count": 0,
+                        "clicked": 0,
+                    },
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+            send_log_id = str(pending_log["_id"])
+
+            if tracking_base_url:
+                body = rewrite_links(body, recipient_id_str, day, tracking_base_url)
+                body += (
+                    f'<img src="{tracking_base_url}/track/open/log/{send_log_id}" '
+                    f'width="1" height="1" style="display:none;" alt="" />'
+                )
+
+            memory_atts = load_step_attachments_for_send(sequence_id, step)
+
+            send_succeeded = False
             try:
-                _smtp_send(engine, enrollment["email"], subject, body)
-                sent_at = now.isoformat(timespec="seconds")
+                _smtp_send(
+                    engine,
+                    enrollment["email"],
+                    subject,
+                    body,
+                    memory_attachments=memory_atts,
+                )
+                sent_at = _local_now().isoformat(timespec="seconds")
                 db.sequence_send_log.update_one(
-                    log_filter,
+                    {"_id": pending_log["_id"]},
                     {
                         "$set": {
-                            "user_id": user_id,
-                            "sequence_id": sequence_id,
-                            "recipient_id": recipient_id,
-                            "email": enrollment["email"],
-                            "step_index": step_index,
-                            "day_key": day,
                             "status": "sent",
                             "sent_at": sent_at,
                             "error": None,
+                            "day_key": day,
                             "updated_at": _utc_now_iso(),
-                        },
-                        "$setOnInsert": {"created_at": _utc_now_iso()},
+                        }
                     },
-                    upsert=True,
                 )
                 try:
                     db.send_log.update_one(
@@ -733,6 +1048,7 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                                 "sent_at": sent_at,
                                 "sequence_id": str(sequence_id),
                                 "step_index": step_index,
+                                "sequence_send_log_id": send_log_id,
                                 "updated_at": _utc_now_iso(),
                             },
                             "$setOnInsert": {"attempt_no": 1, "created_at": _utc_now_iso()},
@@ -743,8 +1059,16 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                     print(f"[send_log warning] Failed to update send_log: {log_exc}")
 
                 user_sent_today[user_id] += 1
-                user_last_send[user_id] = now
+                user_last_send[user_id] = _local_now()
                 summary["sent"] += 1
+                send_succeeded = True
+                _log_event(
+                    "email.sent",
+                    sequence_id=str(sequence_id),
+                    enrollment_id=str(enrollment_id),
+                    step_index=step_index,
+                    send_log_id=send_log_id,
+                )
 
                 next_step = step_index + 1
                 if next_step >= len(steps):
@@ -765,7 +1089,7 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                         {"$inc": {"stats.active": -1, "stats.completed": 1}, "$set": {"updated_at": _utc_now_iso()}},
                     )
                 else:
-                    next_at = _compute_next_send_after_step(settings, steps, next_step, now)
+                    next_at = _compute_next_send_after_step(settings, steps, next_step, _local_now())
                     db.enrollments.update_one(
                         {"_id": enrollment_id},
                         {
@@ -780,39 +1104,37 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
 
             except Exception as exc:
                 transient = _is_transient_error(exc)
-                attempt = (existing_log or {}).get("attempt_no", 0) + 1
+                attempt = (existing_log or pending_log or {}).get("attempt_no", 0) + 1
                 db.sequence_send_log.update_one(
-                    log_filter,
+                    {"_id": pending_log["_id"]},
                     {
                         "$set": {
-                            "user_id": user_id,
-                            "sequence_id": sequence_id,
-                            "recipient_id": recipient_id,
-                            "email": enrollment["email"],
-                            "step_index": step_index,
-                            "day_key": day,
                             "status": "pending" if transient else "failed",
                             "error": str(exc)[:500],
                             "attempt_no": attempt,
                             "updated_at": _utc_now_iso(),
                         },
-                        "$setOnInsert": {"created_at": _utc_now_iso()},
                     },
-                    upsert=True,
                 )
                 if not transient:
                     _stop_enrollment(enrollment_id, "stopped_failed", sequence_id)
                     summary["failed"] += 1
+                    _log_event(
+                        "email.failed",
+                        sequence_id=str(sequence_id),
+                        enrollment_id=str(enrollment_id),
+                        step_index=step_index,
+                    )
                 else:
-                    retry_at = now + timedelta(minutes=min(attempt * 2, 30))
+                    retry_at = _local_now() + timedelta(minutes=min(attempt * 2, 30))
                     db.enrollments.update_one(
                         {"_id": enrollment_id},
                         {"$set": {"next_send_at": retry_at.isoformat(timespec="seconds"), "updated_at": _utc_now_iso()}},
                     )
 
-            if sync_sleep and user_last_send.get(user_id):
-                sleep_sec = random.randint(min_delay, max_delay)
-                time.sleep(min(sleep_sec, 30))
+            if sync_sleep and send_succeeded:
+                # Sleep exactly the user-configured interval (capped for worker responsiveness)
+                time.sleep(min(delay_sec, 120))
 
     if skip_notes and summary["sent"] == 0:
         summary["note"] = "; ".join(dict.fromkeys(skip_notes))
@@ -849,7 +1171,7 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
             raise ValueError("Sequence not found.")
         sequences = [seq]
     else:
-        sequences = list(db.sequences.find({"user_id": user_id}).sort("created_at", -1).limit(1))
+        sequences = list(db.sequences.find({"user_id": user_id, "status": {"$ne": "deleted"}}).sort("created_at", -1).limit(1))
         if not sequences:
             return {"sequence": None, "enrollments": [], "stats": {}, "logs": []}
 
@@ -940,9 +1262,17 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
     )
     failed = db.enrollments.count_documents({"sequence_id": seq_oid, "status": "stopped_failed"})
 
+    lists = {
+        "active": [r for r in enrollment_rows if r["status"] == "active"],
+        "completed": [r for r in enrollment_rows if r["status"] == "completed"],
+        "replied": [r for r in enrollment_rows if r["status"] in ("stopped_replied", "stopped_unsubscribed")],
+        "failed": [r for r in enrollment_rows if r["status"] == "stopped_failed"],
+    }
+
     return {
         "sequence": _seq_to_dict(seq),
         "enrollments": enrollment_rows,
+        "lists": lists,
         "stats": {
             "sent_today": sent_today,
             "opened": opened,
@@ -952,6 +1282,7 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
             "replied": replied,
             "failed": failed,
             "total_enrolled": len(enrollments),
+            "enrolled": len(enrollments),
         },
         "logs": log_lines,
     }
@@ -989,7 +1320,7 @@ def _resolve_sequence(user_id: str, sequence_id: Optional[str] = None):
         if not seq:
             raise ValueError("Sequence not found.")
         return seq, seq_oid
-    sequences = list(db.sequences.find({"user_id": user_id}).sort("created_at", -1).limit(1))
+    sequences = list(db.sequences.find({"user_id": user_id, "status": {"$ne": "deleted"}}).sort("created_at", -1).limit(1))
     if not sequences:
         return None, None
     seq = sequences[0]

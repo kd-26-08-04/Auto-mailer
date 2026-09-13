@@ -23,17 +23,21 @@ from sequence_engine import (
     activate_sequence,
     create_sequence,
     delete_sequence,
+    delete_step_attachment,
     enroll_from_csv,
     enroll_from_data,
     get_sequence,
     get_sequence_dashboard,
     get_inbox_activity,
     get_analytics,
+    list_sequence_attachments,
     list_sequences,
     pause_sequence,
     preview_sequence_steps,
     process_due_sends,
+    record_email_open,
     resume_sequence,
+    store_step_attachment,
     update_sequence,
 )
 from bson.objectid import ObjectId
@@ -335,7 +339,7 @@ def check_login():
 
     if not request.endpoint:
         return
-    allowed_routes = ['login', 'register', 'api_auth_me', 'static', 'track_open', 'track_click', 'favicon', 'health']
+    allowed_routes = ['login', 'register', 'api_auth_me', 'static', 'track_open', 'track_open_by_log', 'track_click', 'favicon', 'health']
     if request.endpoint in allowed_routes:
         return
     if not session.get("user_id"):
@@ -803,6 +807,47 @@ def api_resume_sequence(sequence_id):
         return jsonify({"success": False, "error": str(exc)}), 400
 
 
+@app.route("/api/sequences/<sequence_id>/attachments", methods=["GET"])
+def api_list_attachments(sequence_id):
+    user_id = session.get("user_id")
+    try:
+        return jsonify({"success": True, "attachments": list_sequence_attachments(user_id, sequence_id)})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/<sequence_id>/attachments", methods=["POST"])
+def api_upload_attachment(sequence_id):
+    user_id = session.get("user_id")
+    try:
+        step_index = int(request.form.get("step_index", "0"))
+        file = request.files.get("file")
+        if not file or not file.filename:
+            return jsonify({"success": False, "error": "No file uploaded"}), 400
+        raw = file.read()
+        meta = store_step_attachment(
+            user_id,
+            sequence_id,
+            step_index,
+            secure_filename(file.filename) or file.filename,
+            file.mimetype or "application/octet-stream",
+            raw,
+        )
+        return jsonify({"success": True, "attachment": meta})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/api/sequences/<sequence_id>/attachments/<attachment_id>", methods=["DELETE"])
+def api_delete_attachment(sequence_id, attachment_id):
+    user_id = session.get("user_id")
+    try:
+        delete_step_attachment(user_id, sequence_id, attachment_id)
+        return jsonify({"success": True})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
 @app.route("/api/cron/send", methods=["GET", "POST"])
 def api_cron_send():
     """Endpoint for Vercel Cron or frontend polling to trigger sequence sends."""
@@ -1161,26 +1206,48 @@ def recipients():
 PIXEL_GIF = base64.b64decode(b'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
 
 
+def _pixel_response():
+    response = make_response(PIXEL_GIF)
+    response.headers['Content-Type'] = 'image/gif'
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
+
+
+@app.route('/track/open/log/<send_log_id>')
+def track_open_by_log(send_log_id):
+    """Precise open tracking keyed by sequence_send_log id."""
+    try:
+        record_email_open(send_log_id)
+    except Exception as e:
+        print(f"Tracking open (log) error: {e}")
+    return _pixel_response()
+
+
 @app.route('/track/open/<recipient_id>/<day_key>')
 def track_open(recipient_id, day_key):
+    """Legacy open tracking (recipient + calendar day). Prefer /track/open/log/<id>."""
     try:
         db = get_db()
         now = datetime.now().isoformat()
         db.send_log.update_one(
             {"recipient_id": ObjectId(recipient_id), "day_key": day_key},
-            {"$set": {"opened": 1, "opened_at": now}}
+            {"$set": {"opened": 1, "opened_at": now}, "$inc": {"open_count": 1}}
         )
-        db.sequence_send_log.update_many(
-            {"recipient_id": ObjectId(recipient_id), "day_key": day_key},
-            {"$set": {"opened": 1, "opened_at": now}}
+        # Prefer the most recent sent log for this recipient/day to avoid multi-step corruption
+        log = db.sequence_send_log.find_one(
+            {"recipient_id": ObjectId(recipient_id), "day_key": day_key, "status": "sent"},
+            sort=[("sent_at", -1)],
         )
+        if log:
+            record_email_open(str(log["_id"]))
+        else:
+            db.sequence_send_log.update_many(
+                {"recipient_id": ObjectId(recipient_id), "day_key": day_key},
+                {"$set": {"opened": 1, "opened_at": now}, "$inc": {"open_count": 1}},
+            )
     except (Exception, InvalidId) as e:
         print(f"Tracking open error: {e}")
-        
-    response = make_response(PIXEL_GIF)
-    response.headers['Content-Type'] = 'image/gif'
-    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    return response
+    return _pixel_response()
 
 
 @app.route('/track/click/<recipient_id>/<day_key>')
