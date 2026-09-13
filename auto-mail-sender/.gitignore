@@ -156,3 +156,26 @@ outreach.db-shm
 outreach.db-wal
 password.txt
 Untitled
+
+# Node.js — frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build output
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+
+# Environment files — NEVER commit
+.env
+.env.local
+.env.production
+backend/.env
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db

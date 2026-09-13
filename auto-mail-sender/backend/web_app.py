@@ -335,7 +335,7 @@ def check_login():
 
     if not request.endpoint:
         return
-    allowed_routes = ['login', 'register', 'api_auth_me', 'static', 'track_open', 'track_click', 'favicon']
+    allowed_routes = ['login', 'register', 'api_auth_me', 'static', 'track_open', 'track_click', 'favicon', 'health']
     if request.endpoint in allowed_routes:
         return
     if not session.get("user_id"):
@@ -348,6 +348,25 @@ def check_login():
 def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
                                'favicon.jpeg', mimetype='image/jpeg', silent=True)
+
+
+_start_time = datetime.utcnow()
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Public keep-alive endpoint — no auth required.
+    Render free tier sleeps after 15 min inactivity.
+    Frontend pings this every 10 min to keep the server awake.
+    """
+    uptime_sec = int((datetime.utcnow() - _start_time).total_seconds())
+    h, remainder = divmod(uptime_sec, 3600)
+    m, s = divmod(remainder, 60)
+    return jsonify({
+        "status": "ok",
+        "uptime": f"{h}h {m}m {s}s",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "worker": "running" if _worker_started else "disabled",
+    })
 
 
 @app.route("/api/auth/me", methods=["GET", "OPTIONS"])
