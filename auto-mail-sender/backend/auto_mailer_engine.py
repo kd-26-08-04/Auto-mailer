@@ -515,13 +515,24 @@ def _smtp_send(
         )
 
     context = ssl.create_default_context()
-    with smtplib.SMTP(engine.smtp_host, engine.smtp_port, timeout=30) as server:
+
+    # Force IPv4 resolution to avoid [Errno 101] Network is unreachable on hosts
+    # that lack IPv6 (e.g. Render free tier). smtp.gmail.com can resolve to IPv6
+    # which causes ENETUNREACH when the server has no IPv6 route.
+    try:
+        addrs = socket.getaddrinfo(engine.smtp_host, engine.smtp_port, socket.AF_INET, socket.SOCK_STREAM)
+        smtp_connect_host = addrs[0][4][0]  # First IPv4 address
+    except Exception:
+        smtp_connect_host = engine.smtp_host  # Fallback to hostname if resolve fails
+
+    with smtplib.SMTP(smtp_connect_host, engine.smtp_port, timeout=30) as server:
         if engine.smtp_use_starttls:
             server.ehlo()
             server.starttls(context=context)
             server.ehlo()
         server.login(engine.from_email, engine.smtp_app_password)
         server.send_message(msg)
+
 
 
 def _is_transient_error(exc: Exception) -> bool:
