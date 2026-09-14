@@ -45,7 +45,7 @@ Technical documentation for developers: architecture, file structure, APIs, data
 | Mail engine | `auto_mailer_engine.py` | SMTP, IMAP, tracking pixel, CSV parse |
 | Templates | `apollo_templates.py` + `sequences/*.md` | Bundled niche templates |
 | Worker | `sequence_worker.py` | Standalone cron process for production |
-| Entry (prod) | `wsgi.py` | Gunicorn WSGI entry |
+| Entry (prod) | `main.py` | Gunicorn WSGI entry |
 
 **Two processes in production:**
 - **Web** — serves UI only (`ENABLE_INLINE_WORKER=0`)
@@ -58,7 +58,7 @@ Technical documentation for developers: architecture, file structure, APIs, data
 ```
 auto-mail-sender/
 ├── web_app.py              # Flask routes, auth, API
-├── wsgi.py                 # Gunicorn entry
+├── main.py                 # Gunicorn entry
 ├── auto_mailer_engine.py   # SMTP, IMAP, tracking, CSV
 ├── sequence_engine.py      # Sequences, enrollments, worker logic
 ├── sequence_worker.py      # Background worker (cron)

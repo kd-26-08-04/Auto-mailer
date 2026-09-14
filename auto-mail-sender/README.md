@@ -20,7 +20,7 @@ This repository is split into two independent services:
 ### 2. Backend Hosting (Render / Railway / AWS / VPS)
 - **Root Directory**: `backend`
 - **Build Command**: `pip install -r requirements.txt`
-- **Start Command**: `gunicorn wsgi:app`
+- **Start Command**: `gunicorn main:app`
 - **Background Worker**: `python sequence_worker.py`
 - **Environment Variables**:
   - `MONGO_URI`: MongoDB Connection String
