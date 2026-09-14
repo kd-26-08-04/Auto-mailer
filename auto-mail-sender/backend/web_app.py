@@ -569,42 +569,6 @@ def trigger_check_replies():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/", methods=["GET"])
-def index():
-    defaults = {
-        "daily_limit": "100",
-        "delay_sec": "60",
-        "window_start": "09:00",
-        "window_end": "17:00",
-        "enable_reply_tracking": True,
-        "consent_required": True,
-        "default_steps": json.dumps([
-            {
-                "subject": "{Hello|Hi|Hey} {first_name} - quick question",
-                "subject_variants": [
-                    "{Hello|Hi|Hey} {first_name} - quick question",
-                    "Quick note for {first_name} at {company}",
-                ],
-                "body": "<p>{Hi|Hello} {first_name},</p><p>Would love to connect briefly regarding {company}.</p><p>Best,<br>{sender_name}</p>",
-                "delay_days": 0,
-            },
-            {
-                "subject": "Re: {company} - following up",
-                "subject_variants": [
-                    "Re: {company} - following up",
-                    "Bumping this, {first_name}",
-                ],
-                "body": "<p>Hi {first_name},</p><p>Just bumping this in case it got buried. Happy to share more details.</p><p>Thanks,<br>{sender_name}</p>",
-                "delay_days": 3,
-            },
-            {
-                "subject": "Last try - {first_name}",
-                "body": "<p>Hi {first_name},</p><p>I'll keep this short — should I close the loop on this?</p><p>{sender_name}</p>",
-                "delay_days": 5,
-            },
-        ]),
-    }
-    return render_template("index.html", defaults=defaults, username=session.get("full_name") or session.get("username"))
 
 
 # --- Sequence API (Apollo.io-style) ---
