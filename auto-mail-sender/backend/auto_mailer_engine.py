@@ -101,11 +101,11 @@ class EngineConfig:
     batch_id: str
     from_email: str
     smtp_host: str
-    smtp_port: int
     smtp_app_password: str
+    smtp_port: int = 465
     user_id: str = "default_user"  # Scopes campaigns to this user
     db_path: str = ""              # Preserved for backward compatibility
-    smtp_use_starttls: bool = True
+    smtp_use_starttls: bool = False
 
     subject_template: str = ""
     body_template: str = ""
@@ -514,24 +514,125 @@ def _smtp_send(
             filename=filename or "attachment",
         )
 
-    context = ssl.create_default_context()
+def _get_smtp_connection(engine: EngineConfig, timeout: int = 25):
+    """
+    Establish an SMTP connection with fallback support.
+    Handles:
+    1. Port 465 (SMTPS / SSL) - preferred for Render and cloud hosts where port 587 is blocked.
+    2. IPv6 failure on hosts lacking IPv6 routes by falling back to resolved IPv4.
+    3. Port 587 fallback to Port 465 if STARTTLS connection times out or is unreachable.
+    """
+    use_ssl = (engine.smtp_port == 465) or (not engine.smtp_use_starttls and engine.smtp_port != 587)
 
-    # Force IPv4 resolution to avoid [Errno 101] Network is unreachable on hosts
-    # that lack IPv6 (e.g. Render free tier). smtp.gmail.com can resolve to IPv6
-    # which causes ENETUNREACH when the server has no IPv6 route.
+    if use_ssl:
+        try:
+            ctx = ssl.create_default_context()
+            server = smtplib.SMTP_SSL(engine.smtp_host, 465, context=ctx, timeout=timeout)
+            server.ehlo()
+            return server
+        except Exception as exc:
+            logger.warning(f"SMTP_SSL hostname connect failed ({exc}), trying IPv4 fallback...")
+            try:
+                addrs = socket.getaddrinfo(engine.smtp_host, 465, socket.AF_INET, socket.SOCK_STREAM)
+                ip = addrs[0][4][0]
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                server = smtplib.SMTP_SSL(ip, 465, context=ctx, timeout=timeout)
+                server.ehlo()
+                return server
+            except Exception as exc_ip:
+                logger.error(f"IPv4 SMTP_SSL connection also failed: {exc_ip}")
+                raise exc
+
+    # If configured for port 587 / STARTTLS, try it with a 10s timeout
     try:
-        addrs = socket.getaddrinfo(engine.smtp_host, engine.smtp_port, socket.AF_INET, socket.SOCK_STREAM)
-        smtp_connect_host = addrs[0][4][0]  # First IPv4 address
-    except Exception:
-        smtp_connect_host = engine.smtp_host  # Fallback to hostname if resolve fails
+        ctx = ssl.create_default_context()
+        try:
+            addrs = socket.getaddrinfo(engine.smtp_host, engine.smtp_port, socket.AF_INET, socket.SOCK_STREAM)
+            host = addrs[0][4][0]
+        except Exception:
+            host = engine.smtp_host
 
-    with smtplib.SMTP(smtp_connect_host, engine.smtp_port, timeout=30) as server:
+        server = smtplib.SMTP(host, engine.smtp_port, timeout=min(timeout, 10))
         if engine.smtp_use_starttls:
             server.ehlo()
-            server.starttls(context=context)
+            server.starttls(context=ctx)
             server.ehlo()
+        return server
+    except Exception as exc_587:
+        logger.warning(f"SMTP port {engine.smtp_port} failed ({exc_587}), falling back to SSL port 465...")
+        try:
+            ctx = ssl.create_default_context()
+            server = smtplib.SMTP_SSL(engine.smtp_host, 465, context=ctx, timeout=timeout)
+            server.ehlo()
+            return server
+        except Exception:
+            addrs = socket.getaddrinfo(engine.smtp_host, 465, socket.AF_INET, socket.SOCK_STREAM)
+            ip = addrs[0][4][0]
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            server = smtplib.SMTP_SSL(ip, 465, context=ctx, timeout=timeout)
+            server.ehlo()
+            return server
+
+
+def _smtp_send(
+    engine: EngineConfig,
+    to_email: str,
+    subject: str,
+    body: str,
+    memory_attachments: Optional[List[Tuple[str, bytes, str]]] = None,
+) -> None:
+    """Send HTML email. memory_attachments: list of (filename, bytes, content_type)."""
+    msg = EmailMessage()
+    msg["From"] = engine.from_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(body, subtype="html")
+
+    for path in engine.attachments:
+        if not os.path.isfile(path):
+            continue
+        ctype, encoding = mimetypes.guess_type(path)
+        if ctype is None or encoding is not None:
+            ctype = "application/octet-stream"
+        maintype, subtype = ctype.split("/", 1)
+
+        with open(path, "rb") as f:
+            msg.add_attachment(
+                f.read(),
+                maintype=maintype,
+                subtype=subtype,
+                filename=os.path.basename(path)
+            )
+
+    for filename, raw, ctype in memory_attachments or []:
+        ctype = ctype or "application/octet-stream"
+        if "/" in ctype:
+            maintype, subtype = ctype.split("/", 1)
+        else:
+            maintype, subtype = "application", "octet-stream"
+        msg.add_attachment(
+            raw,
+            maintype=maintype,
+            subtype=subtype,
+            filename=filename or "attachment",
+        )
+
+    server = _get_smtp_connection(engine)
+    try:
         server.login(engine.from_email, engine.smtp_app_password)
         server.send_message(msg)
+    finally:
+        try:
+            server.quit()
+        except Exception:
+            try:
+                server.close()
+            except Exception:
+                pass
 
 
 

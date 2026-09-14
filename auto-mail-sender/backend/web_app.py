@@ -228,7 +228,7 @@ def build_config(form: Dict[str, str], user_id: str, attachments: Optional[List[
     from_email = user.get("smtp_email", "").strip()
     app_password = user.get("smtp_app_password", "").strip()
     smtp_host = "smtp.gmail.com"
-    smtp_port = 587
+    smtp_port = 465
 
     if not from_email:
         from_email = "test@gmail.com"
@@ -558,7 +558,8 @@ def trigger_check_replies():
             batch_id="reply_check",
             from_email=from_email,
             smtp_host="smtp.gmail.com",
-            smtp_port=587,
+            smtp_port=465,
+            smtp_use_starttls=False,
             smtp_app_password=app_password,
             enable_reply_tracking=True,
             imap_host=imap_host,
