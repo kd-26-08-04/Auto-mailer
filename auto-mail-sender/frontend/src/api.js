@@ -34,11 +34,8 @@ async function request(endpoint, options = {}) {
 }
 
 export const api = {
-  // Auth — 401 on checkAuth is normal (not logged in), returns null instead of throwing
-  checkAuth: () => request("/api/auth/me").catch(err => {
-    if (err.message && err.message.includes("401")) return { authenticated: false };
-    throw err;
-  }),
+  // Auth — 401 on checkAuth is normal when user is not logged in
+  checkAuth: () => request("/api/auth/me").catch(() => ({ authenticated: false })),
   login: (credentials) => request("/login", { method: "POST", body: JSON.stringify(credentials) }),
   register: (userData) => request("/register", { method: "POST", body: JSON.stringify(userData) }),
   logout: () => request("/logout", { method: "POST" }),

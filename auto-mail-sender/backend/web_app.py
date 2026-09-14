@@ -113,7 +113,12 @@ class AppState:
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or "auto-mailer-stable-flask-secret-key-2026"
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload size limit
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# Enable cross-origin cookies between Vercel frontend and Render backend
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # CORS: mirror request Origin back so credentials work with any frontend host

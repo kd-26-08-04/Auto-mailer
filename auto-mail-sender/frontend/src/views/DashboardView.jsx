@@ -11,22 +11,45 @@ export const DashboardView = ({ onNavigateSequences, onShowCreateSequence, seque
   const fetchDashboard = async () => {
     try {
       const data = await api.getSequenceDashboard(sequenceId);
-      if (data.success) {
+      if (data && data.success) {
         setDashboardData(data);
       }
-      const st = await api.getStatus();
-      setStatusData(st);
+      const st = await api.getStatus().catch(() => null);
+      if (st) setStatusData(st);
+      return true;
     } catch (err) {
-      console.error('Dashboard fetch error:', err);
+      if (err.message && (err.message.includes('401') || err.message.includes('Unauthorized'))) {
+        return false; // Stop polling on 401
+      }
+      console.error('Dashboard fetch error:', err.message || err);
+      return true;
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchDashboard();
-    const interval = setInterval(fetchDashboard, 3000);
-    return () => clearInterval(interval);
+    let mounted = true;
+    let timerId = null;
+
+    const startPolling = async () => {
+      const success = await fetchDashboard();
+      if (success && mounted) {
+        timerId = setInterval(async () => {
+          const ok = await fetchDashboard();
+          if (!ok && timerId) {
+            clearInterval(timerId);
+          }
+        }, 5000);
+      }
+    };
+
+    startPolling();
+
+    return () => {
+      mounted = false;
+      if (timerId) clearInterval(timerId);
+    };
   }, [sequenceId]);
 
   const hasSequence = dashboardData?.sequence != null;
