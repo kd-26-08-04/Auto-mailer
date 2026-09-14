@@ -344,7 +344,7 @@ def check_login():
 
     if not request.endpoint:
         return
-    allowed_routes = ['index', 'login', 'register', 'api_auth_me', 'static', 'track_open', 'track_open_by_log', 'track_click', 'favicon', 'health']
+    allowed_routes = ['index', 'login', 'register', 'api_auth_me', 'static', 'track_open', 'track_open_by_log', 'track_click', 'favicon', 'health', 'api_cron_send']
     if request.endpoint in allowed_routes:
         return
     if not session.get("user_id"):
@@ -815,14 +815,22 @@ def api_delete_attachment(sequence_id, attachment_id):
         return jsonify({"success": False, "error": str(exc)}), 400
 
 
-@app.route("/api/cron/send", methods=["GET", "POST"])
+@app.route("/api/cron/send", methods=["GET", "POST", "OPTIONS"])
 def api_cron_send():
-    """Endpoint for Vercel Cron or frontend polling to trigger sequence sends."""
-    try:
-        res = process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=15, sync_sleep=False)
-        return jsonify({"success": True, "processed": res})
-    except Exception as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
+    """Endpoint for Vercel Cron or frontend polling to trigger sequence sends.
+    Returns 200 immediately and runs the send in a background thread to avoid
+    Render's request timeout killing the response (which strips CORS headers).
+    """
+    if request.method == 'OPTIONS':
+        return make_response('', 200)
+    def _bg_send():
+        try:
+            process_due_sends(tracking_base_url=TRACKING_BASE_URL, max_per_run=15, sync_sleep=False)
+        except Exception as exc:
+            print(f"[cron/send bg] {exc}")
+    t = threading.Thread(target=_bg_send, daemon=True)
+    t.start()
+    return jsonify({"success": True, "message": "Send triggered in background"})
 
 
 @app.route("/api/sequences/<sequence_id>/dashboard", methods=["GET"])
