@@ -4,6 +4,7 @@ import email
 from email.header import decode_header
 import imaplib
 import json
+import logging
 import os
 import random
 import re
@@ -11,6 +12,8 @@ import smtplib
 import socket
 import ssl
 import time
+
+logger = logging.getLogger(__name__)
 import mimetypes
 import urllib.parse
 from dataclasses import dataclass
