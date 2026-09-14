@@ -713,6 +713,8 @@ def api_activate_sequence(sequence_id):
             csv_path = save_csv_upload()
 
         result = activate_sequence(user_id, sequence_id, csv_path=csv_path, contacts_data=contacts_data)
+        # Immediately trigger background send pass so due emails send right away
+        _trigger_serverless_send()
         return jsonify({"success": True, **result})
     except Exception as exc:
         err_str = str(exc)

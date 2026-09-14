@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Table, X, UserPlus, Trash2, Rocket, Save, Upload, Keyboard } from 'lucide-react';
+﻿import React, { useEffect, useRef, useState } from 'react';
+import { Table, X, UserPlus, Trash2, Rocket, Save, Upload, Keyboard, CheckCircle, AlertTriangle, Loader } from 'lucide-react';
 import { api } from '../api';
 
 /**
@@ -21,11 +21,13 @@ export const LeadReviewModal = ({
   const [entryMode, setEntryMode] = useState('choose');
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState('');
+  const [statusMsg, setStatusMsg] = useState(null); // { type: 'success'|'error', text }
 
   useEffect(() => {
     if (isOpen) {
       setEntryMode(leads.length > 0 ? 'review' : 'choose');
       setParseError('');
+      setStatusMsg(null);
     }
   }, [isOpen]);
 
@@ -41,12 +43,14 @@ export const LeadReviewModal = ({
   });
 
   const handleCellChange = (index, key, value) => {
+    setStatusMsg(null);
     const updated = [...leads];
-    updated[index] = { ...updated[index], [key]: value.trim() };
+    updated[index] = { ...updated[index], [key]: value };
     setLeads(updated);
   };
 
   const handleAddRow = () => {
+    setStatusMsg(null);
     setLeads([...leads, { email: '', first_name: '', company: '', consent: 'true' }]);
     setEntryMode('review');
   };
@@ -57,6 +61,7 @@ export const LeadReviewModal = ({
 
   const startManualEntry = () => {
     setParseError('');
+    setStatusMsg(null);
     if (leads.length === 0) {
       setLeads([{ email: '', first_name: '', company: '', consent: 'true' }]);
     }
@@ -68,6 +73,7 @@ export const LeadReviewModal = ({
     if (!file) return;
     setParsing(true);
     setParseError('');
+    setStatusMsg(null);
     const fd = new FormData();
     fd.append('recipients_file', file);
     try {
@@ -75,6 +81,7 @@ export const LeadReviewModal = ({
       if (res.success && res.rows?.length) {
         setLeads(res.rows);
         setEntryMode('review');
+        setStatusMsg({ type: 'success', text: `âœ… ${res.rows.length} contacts loaded from file. Review and click Save or Start.` });
       } else {
         setParseError(res.error || 'Failed to parse file');
       }
@@ -86,9 +93,29 @@ export const LeadReviewModal = ({
     }
   };
 
+  const handleSaveClick = async () => {
+    setStatusMsg(null);
+    if (onSaveContacts) {
+      await onSaveContacts();
+      // After save completes, show success message inside modal before auto-close
+      setStatusMsg({ type: 'success', text: `âœ… Contacts saved successfully! Sequence is in draft â€” launch it when ready.` });
+    }
+  };
+
+  const handleStartClick = async () => {
+    setStatusMsg(null);
+    if (onConfirmStart) {
+      await onConfirmStart();
+    }
+  };
+
   const validCount = leads.filter((r) => String(r.email || '').includes('@')).length;
   const primaryLabel = mode === 'enroll' ? 'Add to Sequence' : 'Start Sequence';
-  const primaryIcon = mode === 'enroll' ? <UserPlus size={16} style={{ marginRight: 6 }} /> : <Rocket size={16} style={{ marginRight: 6 }} />;
+  const primaryIcon = starting
+    ? <Loader size={16} style={{ marginRight: 6, animation: 'spin 1s linear infinite' }} />
+    : mode === 'enroll'
+      ? <UserPlus size={16} style={{ marginRight: 6 }} />
+      : <Rocket size={16} style={{ marginRight: 6 }} />;
 
   return (
     <div className="modal-backdrop active">
@@ -102,6 +129,29 @@ export const LeadReviewModal = ({
           </button>
         </div>
         <div className="modal-body">
+
+          {/* Inline Status Banner */}
+          {statusMsg && (
+            <div style={{
+              padding: '0.75rem 1rem',
+              borderRadius: '0.6rem',
+              marginBottom: '1rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              background: statusMsg.type === 'success' ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+              border: `1px solid ${statusMsg.type === 'success' ? '#10b981' : '#ef4444'}`,
+              color: statusMsg.type === 'success' ? '#10b981' : '#ef4444',
+            }}>
+              {statusMsg.type === 'success'
+                ? <CheckCircle size={18} />
+                : <AlertTriangle size={18} />}
+              <span>{statusMsg.text}</span>
+            </div>
+          )}
+
           {(entryMode === 'choose' || entryMode === 'review') && (
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
               <button
@@ -112,7 +162,7 @@ export const LeadReviewModal = ({
                 disabled={parsing}
               >
                 <Upload size={14} style={{ marginRight: 6 }} />
-                {parsing ? 'Reading file…' : 'Upload file'}
+                {parsing ? 'Reading fileâ€¦' : 'Upload file'}
               </button>
               <button
                 type="button"
@@ -145,10 +195,10 @@ export const LeadReviewModal = ({
           {entryMode === 'review' && (
             <>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-                Review contacts below. Save to store them without launching, or start the sequence when ready.
+                Review contacts below. <strong>Save contacts</strong> to store them without launching, or <strong>Start Sequence</strong> to launch immediately.
               </p>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                <span className="badge badge-idle">{validCount} valid · {leads.length} rows</span>
+                <span className="badge badge-idle">{validCount} valid Â· {leads.length} rows</span>
                 <button
                   type="button"
                   className="btn-secondary"
@@ -213,27 +263,31 @@ export const LeadReviewModal = ({
         </div>
         <div className="modal-footer" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <button type="button" className="btn-secondary" onClick={onClose}>
-            Cancel
+            {statusMsg?.type === 'success' ? 'Close' : 'Cancel'}
           </button>
           {onSaveContacts && (
             <button
               type="button"
               className="btn-secondary"
               disabled={saving || starting || validCount === 0}
-              onClick={onSaveContacts}
+              onClick={handleSaveClick}
+              style={{ display: 'flex', alignItems: 'center' }}
             >
-              <Save size={16} style={{ marginRight: 6 }} />
-              {saving ? 'Saving…' : 'Save contacts'}
+              {saving
+                ? <><Loader size={16} style={{ marginRight: 6, animation: 'spin 1s linear infinite' }} /> Savingâ€¦</>
+                : <><Save size={16} style={{ marginRight: 6 }} /> Save contacts</>
+              }
             </button>
           )}
           <button
             type="button"
             className="btn-primary"
             disabled={starting || saving || validCount === 0}
-            onClick={onConfirmStart}
+            onClick={handleStartClick}
+            style={{ display: 'flex', alignItems: 'center' }}
           >
             {primaryIcon}
-            {starting ? 'Working…' : primaryLabel}
+            {starting ? 'Workingâ€¦' : primaryLabel}
           </button>
         </div>
       </div>

@@ -32,7 +32,14 @@ _mongo_client = None
 def get_mongo_client():
     global _mongo_client
     if _mongo_client is None:
-        _mongo_client = MongoClient(MONGO_URI)
+        _mongo_client = MongoClient(
+            MONGO_URI,
+            maxPoolSize=50,
+            minPoolSize=5,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+            socketTimeoutMS=10000,
+        )
     return _mongo_client
 
 def get_db():
@@ -154,8 +161,13 @@ class ProgressUpdate:
     error: Optional[str] = None
 
 
+_db_initialized = False
+
 def init_db(db_path: str = "") -> None:
-    """Initialize MongoDB indexes."""
+    """Initialize MongoDB indexes once per process."""
+    global _db_initialized
+    if _db_initialized:
+        return
     try:
         db = get_db()
         db.users.create_index("username", unique=True)
@@ -172,6 +184,7 @@ def init_db(db_path: str = "") -> None:
         db.sequence_send_log.create_index([("enrollment_id", 1), ("step_index", 1)], unique=True)
         db.sequence_send_log.create_index([("user_id", 1), ("day_key", 1), ("status", 1)])
         db.template_overrides.create_index([("user_id", 1), ("template_id", 1)], unique=True)
+        _db_initialized = True
     except Exception as exc:
         print(f"[init_db warning] Could not initialize MongoDB indexes: {exc}")
 
@@ -512,6 +525,11 @@ def _smtp_send(
 
 
 def _is_transient_error(exc: Exception) -> bool:
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return False
+    msg = str(exc).lower()
+    if any(k in msg for k in ["535", "authentication", "username and password not accepted", "credentials_missing", "invalid credentials"]):
+        return False
     transient_markers = (
         smtplib.SMTPServerDisconnected,
         smtplib.SMTPConnectError,
@@ -523,7 +541,6 @@ def _is_transient_error(exc: Exception) -> bool:
     )
     if isinstance(exc, transient_markers):
         return True
-    msg = str(exc).lower()
     if any(k in msg for k in ["timeout", "temporar", "connection", "network", "timed out", "reset"]):
         return True
     return False

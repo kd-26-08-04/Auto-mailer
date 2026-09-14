@@ -107,7 +107,7 @@ export const LoginView = ({ onNavigateRegister, showToast, isDarkMode, toggleThe
             </div>
 
             <button type="submit" className="auth-btn" disabled={submitting}>
-              <span>{submitting ? 'Logging in...' : 'Login'}</span>
+              <span>{submitting ? 'Connecting & Logging in...' : 'Login'}</span>
               <ArrowRight size={18} />
             </button>
           </form>

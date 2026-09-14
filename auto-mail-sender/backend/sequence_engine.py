@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from bson.binary import Binary
 from bson.objectid import ObjectId
-from pymongo import ReturnDocument
+from pymongo import ReturnDocument, UpdateOne, InsertOne
 
 from auto_mailer_engine import (
     DailyWindow,
@@ -46,18 +46,6 @@ ALLOWED_ATTACHMENT_MIME_PREFIXES = (
 
 def init_sequence_db() -> None:
     init_db()
-    db = get_db()
-    db.sequences.create_index([("user_id", 1), ("status", 1)])
-    db.sequences.create_index([("user_id", 1), ("created_at", -1)])
-    db.enrollments.create_index([("sequence_id", 1), ("status", 1), ("next_send_at", 1)])
-    db.enrollments.create_index([("user_id", 1), ("sequence_id", 1)])
-    db.enrollments.create_index([("sequence_id", 1), ("recipient_id", 1)], unique=True)
-    db.sequence_send_log.create_index(
-        [("enrollment_id", 1), ("step_index", 1)], unique=True
-    )
-    db.sequence_send_log.create_index([("user_id", 1), ("day_key", 1), ("status", 1)])
-    db.sequence_attachments.create_index([("sequence_id", 1), ("step_index", 1)])
-    db.sequence_attachments.create_index([("user_id", 1), ("sequence_id", 1)])
 
 def _parse_window(settings: Dict[str, Any]) -> DailyWindow:
     start_str = settings.get("window_start", "09:00")
@@ -152,7 +140,7 @@ def _normalize_settings(settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "delay_sec": delay_sec,
         "window_start": settings.get("window_start", "09:00"),
         "window_end": settings.get("window_end", "17:00"),
-        "consent_required": bool(settings.get("consent_required", True)),
+        "consent_required": bool(settings.get("consent_required", False)),
         "enable_reply_tracking": bool(settings.get("enable_reply_tracking", True)),
         "min_delay_sec": delay_sec,
         "max_delay_sec": delay_sec,
@@ -343,10 +331,11 @@ def _refresh_due_enrollment_times(sequence: Dict[str, Any]) -> int:
 
 
 def enroll_from_data(user_id: str, sequence_id: str, rows: List[Dict[str, Any]]) -> int:
-    """Import list of contact dicts into a sequence. Returns number newly enrolled at Email 1."""
+    """Import list of contact dicts into a sequence using fast MongoDB bulk operations. Returns number newly enrolled at Email 1."""
     init_sequence_db()
     db = get_db()
-    seq = db.sequences.find_one({"_id": ObjectId(sequence_id), "user_id": user_id})
+    seq_oid = ObjectId(sequence_id)
+    seq = db.sequences.find_one({"_id": seq_oid, "user_id": user_id})
     if not seq:
         raise ValueError("Sequence not found.")
     _assert_not_deleted(seq)
@@ -355,67 +344,109 @@ def enroll_from_data(user_id: str, sequence_id: str, rows: List[Dict[str, Any]])
         raise ValueError("No valid recipients provided.")
     
     settings = seq["settings"]
-    consent_required = settings.get("consent_required", True)
+    consent_required = settings.get("consent_required", False)
     first_send_at = _schedule_first_send(settings)
-    enrolled = 0
+    first_send_iso = first_send_at.isoformat(timespec="seconds")
+    now_iso = _utc_now_iso()
 
+    # Step 1: Filter and sanitize rows
+    valid_rows = []
+    valid_emails = []
+    seen_emails = set()
     for row in rows:
         email = str(row.get("email", "")).strip().lower()
         if not email or "@" not in email:
             continue
         if consent_required and not _is_truthy_consent(row.get("consent"), ("true", "1", "yes", "y")):
             continue
-            
-        recipient_id = _upsert_recipient(user_id, row)
+        if email in seen_emails:
+            continue
+        seen_emails.add(email)
+        valid_rows.append((email, row))
+        valid_emails.append(email)
 
-        existing = db.enrollments.find_one(
-            {"sequence_id": ObjectId(sequence_id), "recipient_id": recipient_id}
+    if not valid_rows:
+        return 0
+
+    # Step 2: Bulk upsert recipients
+    rec_ops = []
+    for email, row in valid_rows:
+        rec_ops.append(
+            UpdateOne(
+                {"user_id": user_id, "email": email},
+                {
+                    "$set": {"data": row, "updated_at": now_iso},
+                    "$setOnInsert": {"created_at": now_iso, "replied": False, "do_not_contact": False},
+                },
+                upsert=True
+            )
         )
+    if rec_ops:
+        db.recipients.bulk_write(rec_ops, ordered=False)
+
+    # Step 3: Fetch recipient IDs in a single query
+    recipient_docs = list(db.recipients.find({"user_id": user_id, "email": {"$in": valid_emails}}, {"_id": 1, "email": 1}))
+    email_to_rec_id = {doc["email"]: doc["_id"] for doc in recipient_docs}
+
+    # Step 4: Fetch existing enrollments in a single query
+    rec_ids = list(email_to_rec_id.values())
+    existing_enrollments = list(db.enrollments.find(
+        {"sequence_id": seq_oid, "recipient_id": {"$in": rec_ids}}
+    ))
+    existing_map = {e["recipient_id"]: e for e in existing_enrollments}
+
+    # Step 5: Build bulk enrollment operations
+    enrollment_ops = []
+    enrolled = 0
+    for email, row in valid_rows:
+        rec_id = email_to_rec_id.get(email)
+        if not rec_id:
+            continue
+
+        existing = existing_map.get(rec_id)
         if existing:
-            if existing["status"] in ("stopped_replied", "stopped_unsubscribed"):
+            if existing.get("status") in ("stopped_replied", "stopped_unsubscribed"):
                 continue
-            # Never reset progress of an in-progress enrollment
             patch: Dict[str, Any] = {
                 "data": row,
                 "email": email,
-                "updated_at": _utc_now_iso(),
+                "updated_at": now_iso,
             }
-            if existing["status"] == "stopped_failed":
+            if existing.get("status") == "stopped_failed":
                 patch["status"] = "active"
-                patch["next_send_at"] = first_send_at.isoformat(timespec="seconds")
-            db.enrollments.update_one({"_id": existing["_id"]}, {"$set": patch})
-            continue
+                patch["next_send_at"] = first_send_iso
+            enrollment_ops.append(
+                UpdateOne({"_id": existing["_id"]}, {"$set": patch})
+            )
+        else:
+            enrollment_ops.append(
+                InsertOne(
+                    {
+                        "user_id": user_id,
+                        "sequence_id": seq_oid,
+                        "recipient_id": rec_id,
+                        "email": email,
+                        "data": row,
+                        "current_step": 0,
+                        "status": "active",
+                        "next_send_at": first_send_iso,
+                        "last_sent_at": None,
+                        "enrolled_at": now_iso,
+                        "updated_at": now_iso,
+                    }
+                )
+            )
+            enrolled += 1
 
-        db.enrollments.insert_one(
-            {
-                "user_id": user_id,
-                "sequence_id": ObjectId(sequence_id),
-                "recipient_id": recipient_id,
-                "email": email,
-                "data": row,
-                "current_step": 0,
-                "status": "active",
-                "next_send_at": first_send_at.isoformat(timespec="seconds"),
-                "last_sent_at": None,
-                "enrolled_at": _utc_now_iso(),
-                "updated_at": _utc_now_iso(),
-            }
-        )
-        enrolled += 1
-        _log_event(
-            "contact.enrolled",
-            sequence_id=sequence_id,
-            user_id=user_id,
-            email=email,
-            current_step=0,
-        )
+    if enrollment_ops:
+        db.enrollments.bulk_write(enrollment_ops, ordered=False)
 
     if enrolled:
         db.sequences.update_one(
-            {"_id": ObjectId(sequence_id)},
+            {"_id": seq_oid},
             {
                 "$inc": {"stats.enrolled": enrolled, "stats.active": enrolled},
-                "$set": {"updated_at": _utc_now_iso()},
+                "$set": {"updated_at": now_iso},
             },
         )
     return enrolled
@@ -1200,13 +1231,12 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
             step_label = e["status"].replace("_", " ").title()
 
         error_msg = None
-        if e["status"] in ("stopped_failed", "failed"):
-            log_doc = db.sequence_send_log.find_one(
-                {"enrollment_id": e["_id"]},
-                sort=[("updated_at", -1)]
-            )
-            if log_doc and log_doc.get("error"):
-                error_msg = format_user_friendly_error(log_doc.get("error"))
+        log_doc = db.sequence_send_log.find_one(
+            {"enrollment_id": e["_id"]},
+            sort=[("updated_at", -1)]
+        )
+        if log_doc and log_doc.get("error"):
+            error_msg = format_user_friendly_error(log_doc.get("error"))
 
         enrollment_rows.append(
             {
@@ -1234,28 +1264,30 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
             )
 
     active = db.enrollments.count_documents({"sequence_id": seq_oid, "status": "active"})
+    settings = seq.get("settings", {})
+    window = _parse_window(settings)
+    now = _local_now()
+    in_window = window.contains(now)
+    pending_next = db.enrollments.find_one(
+        {"sequence_id": seq_oid, "status": "active", "next_send_at": {"$ne": None}},
+        sort=[("next_send_at", 1)],
+    )
+    next_send_time = pending_next.get("next_send_at") if pending_next else None
+
+    if not in_window:
+        status_msg = f"Outside Working Hours ({settings.get('window_start', '09:00')} - {settings.get('window_end', '17:00')})."
+        if next_send_time:
+            status_msg += f" Next send scheduled at: {next_send_time}"
+    elif next_send_time:
+        status_msg = f"Worker Active (Working Hours: {settings.get('window_start', '09:00')} - {settings.get('window_end', '17:00')}). Next send scheduled at: {next_send_time}"
+    elif active > 0:
+        status_msg = f"Worker Active (Working Hours: {settings.get('window_start', '09:00')} - {settings.get('window_end', '17:00')}). Ready to process active contacts."
+    else:
+        status_msg = "No active contacts scheduled for send."
+
     if not log_lines and active:
-        settings = seq.get("settings", {})
-        window = _parse_window(settings)
-        now = _local_now()
-        pending = db.enrollments.find_one(
-            {"sequence_id": seq_oid, "status": "active", "next_send_at": {"$ne": None}},
-            sort=[("next_send_at", 1)],
-        )
-        if pending and pending.get("next_send_at"):
-            if not window.contains(now):
-                log_lines.append(
-                    "Outside working hours "
-                    f"({settings.get('window_start', '09:00')}-{settings.get('window_end', '17:00')}). "
-                    f"Next send scheduled: {pending['next_send_at']}"
-                )
-            else:
-                log_lines.append(f"Next send scheduled: {pending['next_send_at']}")
-        elif not window.contains(now):
-            log_lines.append(
-                "Outside working hours "
-                f"({settings.get('window_start', '09:00')}-{settings.get('window_end', '17:00')})."
-            )
+        log_lines.append(status_msg)
+
     completed = db.enrollments.count_documents({"sequence_id": seq_oid, "status": "completed"})
     replied = db.enrollments.count_documents(
         {"sequence_id": seq_oid, "status": {"$in": ["stopped_replied", "stopped_unsubscribed"]}}
@@ -1269,10 +1301,19 @@ def get_sequence_dashboard(user_id: str, sequence_id: Optional[str] = None) -> D
         "failed": [r for r in enrollment_rows if r["status"] == "stopped_failed"],
     }
 
+    schedule_info = {
+        "is_in_window": in_window,
+        "window_start": settings.get("window_start", "09:00"),
+        "window_end": settings.get("window_end", "17:00"),
+        "next_send_at": next_send_time,
+        "status_message": status_msg,
+    }
+
     return {
         "sequence": _seq_to_dict(seq),
         "enrollments": enrollment_rows,
         "lists": lists,
+        "schedule_info": schedule_info,
         "stats": {
             "sent_today": sent_today,
             "opened": opened,

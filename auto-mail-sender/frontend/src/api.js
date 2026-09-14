@@ -90,6 +90,8 @@ export const api = {
 
   previewSequence: (id, formData) => request(`/api/sequences/${id}/preview`, { method: "POST", body: formData }),
 
+  triggerSend: () => request("/api/cron/send", { method: "POST" }),
+  
   uploadAttachment: (id, formData) =>
     request(`/api/sequences/${id}/attachments`, { method: "POST", body: formData }),
   listAttachments: (id) => request(`/api/sequences/${id}/attachments`),

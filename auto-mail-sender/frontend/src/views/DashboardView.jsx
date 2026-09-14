@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GitBranch, Terminal } from 'lucide-react';
+import { GitBranch, Terminal, Play, RefreshCw, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
 import { api } from '../api';
 
 export const DashboardView = ({ onNavigateSequences, onShowCreateSequence, sequenceId }) => {
@@ -7,6 +7,8 @@ export const DashboardView = ({ onNavigateSequences, onShowCreateSequence, seque
   const [statusData, setStatusData] = useState(null);
   const [activeTab, setActiveTab] = useState('active');
   const [loading, setLoading] = useState(true);
+  const [sendingNow, setSendingNow] = useState(false);
+  const [sendMsg, setSendMsg] = useState('');
 
   const fetchDashboard = async () => {
     try {
@@ -25,6 +27,25 @@ export const DashboardView = ({ onNavigateSequences, onShowCreateSequence, seque
       return true;
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleManualSend = async () => {
+    setSendingNow(true);
+    setSendMsg('');
+    try {
+      const res = await api.triggerSend();
+      if (res.success && res.processed) {
+        const p = res.processed;
+        setSendMsg(`Send pass complete: ${p.sent || 0} sent, ${p.skipped || 0} skipped, ${p.failed || 0} failed.`);
+      } else {
+        setSendMsg('Send trigger complete.');
+      }
+      await fetchDashboard();
+    } catch (err) {
+      setSendMsg('Trigger error: ' + err.message);
+    } finally {
+      setSendingNow(false);
     }
   };
 
@@ -57,16 +78,26 @@ export const DashboardView = ({ onNavigateSequences, onShowCreateSequence, seque
   const stats = dashboardData?.stats || {};
   const lists = dashboardData?.lists || {};
   const logs = dashboardData?.logs || statusData?.logs || [];
+  const scheduleInfo = dashboardData?.schedule_info;
 
   const recipientRow = (rec, idx) => (
-    <div key={idx} className="recipient-item">
-      <span>
-        <span className="status-dot"></span>
-        {rec.email}
-      </span>
-      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-        Step {rec.current_step} · {rec.next_send_at ? new Date(rec.next_send_at).toLocaleString() : (rec.status || 'Pending')}
-      </span>
+    <div key={idx} className="recipient-item" style={{ padding: '0.75rem', borderBottom: '1px solid var(--border-color, #333)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div>
+        <div style={{ fontWeight: 600 }}>{rec.email}</div>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted, #888)' }}>
+          {rec.step_label || `Step ${rec.current_step + 1}`}
+          {rec.error ? <span style={{ color: 'var(--danger, #ef4444)', marginLeft: 8 }}>⚠️ {rec.error}</span> : null}
+        </div>
+      </div>
+      <div style={{ textAlign: 'right', fontSize: '0.8rem', color: 'var(--text-muted, #888)' }}>
+        {rec.next_send_at ? (
+          <span>⏰ Next: {new Date(rec.next_send_at).toLocaleString()}</span>
+        ) : rec.last_sent_at ? (
+          <span>✅ Last Sent: {new Date(rec.last_sent_at).toLocaleString()}</span>
+        ) : (
+          <span style={{ textTransform: 'capitalize' }}>{rec.status || 'Pending'}</span>
+        )}
+      </div>
     </div>
   );
 
@@ -92,6 +123,36 @@ export const DashboardView = ({ onNavigateSequences, onShowCreateSequence, seque
 
       {hasSequence && (
         <div id="dashboard-content" className="content-stack">
+          {/* SCHEDULE STATUS BANNER */}
+          {scheduleInfo && (
+            <div className="card" style={{
+              background: scheduleInfo.is_in_window ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
+              borderLeft: `4px solid ${scheduleInfo.is_in_window ? '#10b981' : '#f59e0b'}`,
+              display: 'flex',
+              justify: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '1rem'
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, fontSize: '0.95rem' }}>
+                  <Clock size={18} style={{ color: scheduleInfo.is_in_window ? '#10b981' : '#f59e0b' }} />
+                  <span>{scheduleInfo.status_message}</span>
+                </div>
+                {sendMsg && <div style={{ fontSize: '0.85rem', color: '#10b981', marginTop: '0.25rem' }}>{sendMsg}</div>}
+              </div>
+
+              <button
+                className="btn-primary"
+                onClick={handleManualSend}
+                disabled={sendingNow}
+                style={{ width: 'auto', padding: '0.4rem 0.9rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              >
+                {sendingNow ? <RefreshCw size={14} className="spin" /> : <Play size={14} />}
+                {sendingNow ? 'Sending Emails...' : 'Send Due Emails Now'}
+              </button>
+            </div>
+          )}
           {/* STATS GRID */}
           <div className="stats-grid">
             <div className="card stat-card">

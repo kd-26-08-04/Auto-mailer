@@ -100,7 +100,7 @@ export function App() {
     setLeadSaving(true);
     try {
       await onSaveContactsCallback(parsedLeads);
-      setLeadModalOpen(false);
+      // Do NOT auto-close — LeadReviewModal will show success banner; user closes manually
     } finally {
       setLeadSaving(false);
     }

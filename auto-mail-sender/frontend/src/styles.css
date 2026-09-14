@@ -1895,3 +1895,9 @@ body.dark-mode .ql-snow .ql-picker-options {
   margin-top: 0.35rem;
   word-break: break-word;
 }
+
+/* Spinner animation used by inline Loader icons */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}

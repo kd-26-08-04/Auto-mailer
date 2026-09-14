@@ -77,7 +77,7 @@ export const SequencesView = ({
   const [delaySec, setDelaySec] = useState(60);
   const [windowStart, setWindowStart] = useState('09:00');
   const [windowEnd, setWindowEnd] = useState('17:00');
-  const [consentRequired, setConsentRequired] = useState(true);
+  const [consentRequired, setConsentRequired] = useState(false);
   const [enableReplyTracking, setEnableReplyTracking] = useState(true);
 
   // Preview Data
@@ -129,7 +129,7 @@ export const SequencesView = ({
     setDelaySec(60);
     setWindowStart('09:00');
     setWindowEnd('17:00');
-    setConsentRequired(true);
+    setConsentRequired(false);
     setEnableReplyTracking(true);
     setSelectedTemplateId('');
     setTemplateHint('');
