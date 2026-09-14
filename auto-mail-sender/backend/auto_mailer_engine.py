@@ -1,3 +1,4 @@
+import base64
 import csv
 import dataclasses
 import email
@@ -8,6 +9,7 @@ import logging
 import os
 import random
 import re
+import requests
 import smtplib
 import socket
 import ssl
@@ -109,6 +111,12 @@ class EngineConfig:
     user_id: str = "default_user"  # Scopes campaigns to this user
     db_path: str = ""              # Preserved for backward compatibility
     smtp_use_starttls: bool = False
+
+    # Email Provider configuration ("smtp" or "brevo")
+    email_provider: str = "smtp"
+    brevo_api_key: str = ""
+    brevo_sender_email: str = ""
+    brevo_sender_name: str = ""
 
     subject_template: str = ""
     body_template: str = ""
@@ -581,6 +589,73 @@ def _get_smtp_connection(engine: EngineConfig, timeout: int = 25):
             return server
 
 
+def _brevo_send(
+    engine: EngineConfig,
+    to_email: str,
+    subject: str,
+    body: str,
+    memory_attachments: Optional[List[Tuple[str, bytes, str]]] = None,
+) -> None:
+    """Send HTML email via Brevo (Sendinblue) REST API over HTTPS (Port 443)."""
+    sender_email = (engine.brevo_sender_email or engine.from_email).strip()
+    sender_name = (engine.brevo_sender_name or sender_email.split("@")[0]).strip()
+    api_key = engine.brevo_api_key.strip()
+
+    if not api_key:
+        raise ValueError("Brevo API key is not configured. Please save it in Settings.")
+    if not sender_email:
+        raise ValueError("Brevo sender email is not configured. Please save it in Settings.")
+
+    payload: Dict[str, Any] = {
+        "sender": {"email": sender_email, "name": sender_name},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": body,
+    }
+
+    attachments_payload = []
+    for path in engine.attachments:
+        if os.path.isfile(path):
+            try:
+                with open(path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                    attachments_payload.append({
+                        "name": os.path.basename(path),
+                        "content": b64
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to read attachment {path} for Brevo: {e}")
+
+    for filename, raw, _ctype in memory_attachments or []:
+        try:
+            b64 = base64.b64encode(raw).decode("utf-8")
+            attachments_payload.append({
+                "name": filename or "attachment",
+                "content": b64
+            })
+        except Exception as e:
+            logger.warning(f"Failed to encode memory attachment for Brevo: {e}")
+
+    if attachments_payload:
+        payload["attachment"] = attachments_payload
+
+    headers = {
+        "accept": "application/json",
+        "api-key": api_key,
+        "content-type": "application/json"
+    }
+
+    resp = requests.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers, timeout=25)
+    if resp.status_code not in (200, 201, 202):
+        err_msg = resp.text
+        try:
+            err_json = resp.json()
+            err_msg = err_json.get("message") or err_json.get("code") or resp.text
+        except Exception:
+            pass
+        raise RuntimeError(f"Brevo API error ({resp.status_code}): {err_msg}")
+
+
 def _smtp_send(
     engine: EngineConfig,
     to_email: str,
@@ -588,7 +663,12 @@ def _smtp_send(
     body: str,
     memory_attachments: Optional[List[Tuple[str, bytes, str]]] = None,
 ) -> None:
-    """Send HTML email. memory_attachments: list of (filename, bytes, content_type)."""
+    """Send HTML email. Routes to Brevo API or direct SMTP based on engine.email_provider."""
+    # Check if Brevo is configured
+    if getattr(engine, "email_provider", "smtp") == "brevo" or (not engine.smtp_app_password and getattr(engine, "brevo_api_key", "")):
+        _brevo_send(engine, to_email, subject, body, memory_attachments)
+        return
+
     msg = EmailMessage()
     msg["From"] = engine.from_email
     msg["To"] = to_email
@@ -643,7 +723,7 @@ def _is_transient_error(exc: Exception) -> bool:
     if isinstance(exc, smtplib.SMTPAuthenticationError):
         return False
     msg = str(exc).lower()
-    if any(k in msg for k in ["535", "authentication", "username and password not accepted", "credentials_missing", "invalid credentials"]):
+    if any(k in msg for k in ["535", "authentication", "username and password not accepted", "credentials_missing", "invalid credentials", "unauthorized", "invalid api key", "key not found"]):
         return False
     transient_markers = (
         smtplib.SMTPServerDisconnected,
@@ -653,10 +733,11 @@ def _is_transient_error(exc: Exception) -> bool:
         socket.timeout,
         TimeoutError,
         ConnectionError,
+        requests.RequestException,
     )
     if isinstance(exc, transient_markers):
         return True
-    if any(k in msg for k in ["timeout", "temporar", "connection", "network", "timed out", "reset"]):
+    if any(k in msg for k in ["timeout", "temporar", "connection", "network", "timed out", "reset", "rate limit", "429", "500", "502", "503", "504"]):
         return True
     return False
 

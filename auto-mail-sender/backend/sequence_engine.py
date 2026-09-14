@@ -604,10 +604,26 @@ def _build_engine_config(user_id: str, sequence: Dict[str, Any], tracking_base_u
     user = db.users.find_one({"_id": ObjectId(user_id)})
     if not user:
         raise ValueError(f"User {user_id} not found.")
+
+    email_provider = user.get("email_provider", "smtp")
     from_email = user.get("smtp_email", "").strip()
     app_password = user.get("smtp_app_password", "").strip()
-    if not from_email or not app_password:
-        raise ValueError("SMTP credentials not configured for user.")
+    brevo_api_key = user.get("brevo_api_key", "").strip()
+    brevo_sender_email = user.get("brevo_sender_email", "").strip() or from_email
+    brevo_sender_name = user.get("brevo_sender_name", "").strip()
+
+    if email_provider == "brevo":
+        if not brevo_api_key or not brevo_sender_email:
+            raise ValueError("Brevo API key and Sender Email are not configured. Please save them in Settings.")
+        from_email = brevo_sender_email
+    else:
+        if not from_email or not app_password:
+            # Fallback to Brevo if Brevo is configured
+            if brevo_api_key and brevo_sender_email:
+                email_provider = "brevo"
+                from_email = brevo_sender_email
+            else:
+                raise ValueError("SMTP credentials (or Brevo API Key) are not configured. Please save them in Settings.")
 
     settings = sequence["settings"]
     window = _parse_window(settings)
@@ -620,6 +636,10 @@ def _build_engine_config(user_id: str, sequence: Dict[str, Any], tracking_base_u
         smtp_port=465,
         smtp_use_starttls=False,
         smtp_app_password=app_password,
+        email_provider=email_provider,
+        brevo_api_key=brevo_api_key,
+        brevo_sender_email=brevo_sender_email,
+        brevo_sender_name=brevo_sender_name,
         daily_limit=settings["daily_limit"],
         delay_sec=delay_sec,
         window=window,

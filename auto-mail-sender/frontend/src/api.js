@@ -42,7 +42,14 @@ export const api = {
   
   // Settings & Credentials
   getSettings: () => request("/settings"),
-  saveSettings: (formData) => request("/settings", { method: "POST", body: formData }),
+  saveSettings: (payloadOrFormData) => {
+    const isFD = payloadOrFormData instanceof FormData;
+    return request("/settings", {
+      method: "POST",
+      body: isFD ? payloadOrFormData : JSON.stringify(payloadOrFormData),
+    });
+  },
+  testEmailConnection: (payload) => request("/api/test-email-connection", { method: "POST", body: JSON.stringify(payload) }),
   
   // Scan Inbox Replies
   checkReplies: (formData) => request("/check-replies", { method: "POST", body: formData }),

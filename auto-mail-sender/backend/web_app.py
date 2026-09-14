@@ -225,17 +225,29 @@ def build_config(form: Dict[str, str], user_id: str, attachments: Optional[List[
     if not user:
         raise ValueError("User not found.")
 
+    email_provider = user.get("email_provider", "smtp")
     from_email = user.get("smtp_email", "").strip()
     app_password = user.get("smtp_app_password", "").strip()
+    brevo_api_key = user.get("brevo_api_key", "").strip()
+    brevo_sender_email = user.get("brevo_sender_email", "").strip() or from_email
+    brevo_sender_name = user.get("brevo_sender_name", "").strip()
     smtp_host = "smtp.gmail.com"
     smtp_port = 465
 
-    if not from_email:
-        from_email = "test@gmail.com"
-
-    if require_password:
-        if not user.get("smtp_email") or not user.get("smtp_app_password"):
-            raise ValueError("Sender email or Gmail App Password is not configured. Please save them in the Settings tab first.")
+    if email_provider == "brevo":
+        from_email = brevo_sender_email or from_email or "test@gmail.com"
+        if require_password and (not brevo_api_key or not brevo_sender_email):
+            raise ValueError("Brevo API Key and Sender Email are not configured. Please save them in the Settings tab first.")
+    else:
+        if not from_email:
+            from_email = "test@gmail.com"
+        if require_password:
+            if not user.get("smtp_email") or not user.get("smtp_app_password"):
+                if brevo_api_key and brevo_sender_email:
+                    email_provider = "brevo"
+                    from_email = brevo_sender_email
+                else:
+                    raise ValueError("Sender email or Gmail App Password (or Brevo API Key) is not configured. Please save them in the Settings tab first.")
 
     batch_id = form.get("batch_id", "").strip() or f"batch-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     subject_template = form.get("subject_template", "").strip()
@@ -281,6 +293,10 @@ def build_config(form: Dict[str, str], user_id: str, attachments: Optional[List[
         smtp_host=smtp_host,
         smtp_port=smtp_port,
         smtp_app_password=app_password,
+        email_provider=email_provider,
+        brevo_api_key=brevo_api_key,
+        brevo_sender_email=brevo_sender_email,
+        brevo_sender_name=brevo_sender_name,
         subject_template=subject_template,
         body_template=body_template,
         daily_limit=daily_limit,
@@ -479,29 +495,42 @@ def logout():
 
 @app.route("/settings", methods=["GET", "POST", "OPTIONS"])
 def settings():
-
     user_id = session.get("user_id")
     db = get_db()
     
     if request.method == "POST":
-        smtp_email = request.form.get("smtp_email", "").strip()
-        smtp_app_password = request.form.get("smtp_app_password", "").strip()
-        imap_host = request.form.get("imap_host", "").strip() or "imap.gmail.com"
-        imap_port = int(request.form.get("imap_port", "993").strip() or 993)
-        imap_username = request.form.get("imap_username", "").strip()
-        imap_password = request.form.get("imap_password", "").strip()
+        data = request.get_json(silent=True) or request.form
+        email_provider = data.get("email_provider", "smtp").strip()
+        smtp_email = data.get("smtp_email", "").strip()
+        smtp_app_password = data.get("smtp_app_password", "").strip()
+        brevo_api_key = data.get("brevo_api_key", "").strip()
+        brevo_sender_email = data.get("brevo_sender_email", "").strip()
+        brevo_sender_name = data.get("brevo_sender_name", "").strip()
+        imap_host = data.get("imap_host", "").strip() or "imap.gmail.com"
+        imap_port = int(data.get("imap_port", "993") or 993)
+        imap_username = data.get("imap_username", "").strip()
+        imap_password = data.get("imap_password", "").strip()
         
-        if not smtp_email:
-            return jsonify({"success": False, "error": "Sender email is required."}), 400
+        if email_provider == "brevo":
+            if not brevo_sender_email and not smtp_email:
+                return jsonify({"success": False, "error": "Brevo sender email is required."}), 400
+        else:
+            if not smtp_email:
+                return jsonify({"success": False, "error": "Sender Gmail address is required."}), 400
             
-        update_doc = {
-            "smtp_email": smtp_email,
+        update_doc: Dict[str, Any] = {
+            "email_provider": email_provider,
+            "smtp_email": smtp_email or brevo_sender_email,
+            "brevo_sender_email": brevo_sender_email or smtp_email,
+            "brevo_sender_name": brevo_sender_name,
             "imap_host": imap_host,
             "imap_port": imap_port,
             "imap_username": imap_username
         }
         if smtp_app_password and smtp_app_password != "********":
             update_doc["smtp_app_password"] = smtp_app_password
+        if brevo_api_key and brevo_api_key != "********":
+            update_doc["brevo_api_key"] = brevo_api_key
         if imap_password and imap_password != "********":
             update_doc["imap_password"] = imap_password
             
@@ -513,19 +542,72 @@ def settings():
         return jsonify({"success": False, "error": "User not found."}), 404
         
     masked_pw = "********" if user.get("smtp_app_password") else ""
+    masked_brevo_key = "********" if user.get("brevo_api_key") else ""
     masked_imap_pw = "********" if user.get("imap_password") else ""
     return jsonify({
         "success": True,
         "username": user.get("username"),
         "full_name": user.get("full_name"),
         "phone": user.get("phone"),
+        "email_provider": user.get("email_provider", "smtp"),
         "smtp_email": user.get("smtp_email", ""),
         "smtp_app_password": masked_pw,
+        "brevo_api_key": masked_brevo_key,
+        "brevo_sender_email": user.get("brevo_sender_email", user.get("smtp_email", "")),
+        "brevo_sender_name": user.get("brevo_sender_name", ""),
         "imap_host": user.get("imap_host", "imap.gmail.com"),
         "imap_port": user.get("imap_port", 993),
         "imap_username": user.get("imap_username", ""),
         "imap_password": masked_imap_pw
     })
+
+
+@app.route("/api/test-email-connection", methods=["POST"])
+def test_email_connection():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    db = get_db()
+    user = db.users.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        return jsonify({"success": False, "error": "User not found."}), 404
+
+    data = request.get_json(silent=True) or request.form
+    target_email = data.get("test_recipient", "").strip() or user.get("smtp_email", "").strip() or user.get("brevo_sender_email", "").strip()
+    if not target_email:
+        return jsonify({"success": False, "error": "Please provide a recipient email to send the test email to."}), 400
+
+    provider = data.get("email_provider") or user.get("email_provider", "smtp")
+    
+    try:
+        from auto_mailer_engine import EngineConfig, _smtp_send
+        cfg = EngineConfig(
+            user_id=user_id,
+            batch_id="test-connection",
+            from_email=user.get("smtp_email", "").strip() or user.get("brevo_sender_email", "").strip(),
+            smtp_host="smtp.gmail.com",
+            smtp_port=465,
+            smtp_use_starttls=False,
+            smtp_app_password=user.get("smtp_app_password", "").strip(),
+            email_provider=provider,
+            brevo_api_key=user.get("brevo_api_key", "").strip(),
+            brevo_sender_email=user.get("brevo_sender_email", "").strip(),
+            brevo_sender_name=user.get("brevo_sender_name", "").strip(),
+        )
+
+        test_subject = f"Test Email from Auto-Mailer ({provider.upper()})"
+        test_body = f"""
+        <div style="font-family: Arial, sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 8px; max-width: 500px; margin: 0 auto;">
+            <h2 style="color: #4f46e5; margin-top: 0;">Auto-Mailer Connection Test</h2>
+            <p>Your email provider <strong>{provider.upper()}</strong> is configured correctly and working seamlessly!</p>
+            <p style="color: #64748b; font-size: 13px;">Sent at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        </div>
+        """
+        _smtp_send(cfg, target_email, test_subject, test_body)
+        return jsonify({"success": True, "message": f"Test email sent successfully via {provider.upper()} to {target_email}!"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
 
 @app.route("/check-replies", methods=["POST"])
