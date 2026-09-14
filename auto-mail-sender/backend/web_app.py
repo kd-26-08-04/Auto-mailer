@@ -198,6 +198,47 @@ def _start_inline_worker() -> None:
 
 _start_inline_worker()
 
+
+def _start_keep_alive() -> None:
+    """Keep-Alive Background Self-Ping for Render Free Tier.
+    Render free tier automatically sleeps after 15 min without incoming HTTP traffic.
+    By pinging the public external URL every 10 minutes, Render's router
+    registers active traffic and keeps the server alive 24/7.
+    """
+    keep_alive_url = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("KEEP_ALIVE_URL")
+    if not keep_alive_url and not is_serverless:
+        keep_alive_url = "https://auto-mailer-1.onrender.com"
+
+    if not keep_alive_url or is_serverless:
+        return
+
+    ping_target = f"{keep_alive_url.rstrip('/')}/api/health"
+
+    def keep_alive_loop():
+        import time
+        import urllib.request
+        # Initial sleep 60s after startup
+        time.sleep(60)
+        print(f"[keep-alive] Self-ping active for {ping_target} (Interval: 10m)")
+        while True:
+            try:
+                req = urllib.request.Request(
+                    ping_target,
+                    headers={"User-Agent": "AutoMailer-KeepAlive/1.0"}
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    if resp.status == 200:
+                        pass
+            except Exception as exc:
+                print(f"[keep-alive] Ping note: {exc}")
+            time.sleep(600)  # Ping every 10 min (before Render 15 min threshold)
+
+    t = threading.Thread(target=keep_alive_loop, daemon=True, name="keep-alive-worker")
+    t.start()
+
+
+_start_keep_alive()
+
 # Multi-user thread and runtime state directory
 user_states: Dict[str, AppState] = {}
 states_lock = threading.Lock()
@@ -405,13 +446,13 @@ def health():
 def api_auth_me():
     user_id = session.get("user_id")
     if not user_id:
-        return jsonify({"authenticated": False}), 401
+        return jsonify({"authenticated": False}), 200
     return jsonify({
         "authenticated": True,
         "user_id": user_id,
         "username": session.get("username"),
         "full_name": session.get("full_name")
-    })
+    }), 200
 
 
 @app.route("/register", methods=["GET", "POST", "OPTIONS"])

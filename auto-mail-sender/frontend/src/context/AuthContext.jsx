@@ -3,64 +3,77 @@ import { api } from '../api';
 
 const AuthContext = createContext(null);
 
-const KEEP_ALIVE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const KEEP_ALIVE_INTERVAL_MS = 5 * 60 * 1000; // Ping every 5 minutes to keep Render alive
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // If user was previously logged in, show loader while validating session.
+  // If user is not logged in (e.g. first visit), show Login page INSTANTLY (0ms delay)!
+  const [loading, setLoading] = useState(() => {
+    return localStorage.getItem('auth_active') === 'true';
+  });
   const keepAliveRef = useRef(null);
 
-  const startKeepAlive = () => {
-    // Ping /api/health every 10 min to prevent Render free tier sleep
-    if (keepAliveRef.current) return; // already running
-    keepAliveRef.current = setInterval(async () => {
-      try {
-        await fetch('/api/health');
-      } catch (_) {
-        // silent — server might be temporarily down
-      }
-    }, KEEP_ALIVE_INTERVAL_MS);
-  };
-
-  const stopKeepAlive = () => {
-    if (keepAliveRef.current) {
-      clearInterval(keepAliveRef.current);
-      keepAliveRef.current = null;
+  const pingServer = async () => {
+    try {
+      await fetch(`${API_BASE}/api/health`, { method: 'GET', cache: 'no-store' });
+    } catch (_) {
+      // silent
     }
   };
 
   const checkAuth = async () => {
     try {
       const data = await api.checkAuth();
-      if (data.authenticated) {
+      if (data && data.authenticated) {
         setUser({
           user_id: data.user_id,
           username: data.username,
           full_name: data.full_name,
         });
-        startKeepAlive();
+        localStorage.setItem('auth_active', 'true');
       } else {
         setUser(null);
-        stopKeepAlive();
+        localStorage.removeItem('auth_active');
       }
     } catch (err) {
       setUser(null);
-      stopKeepAlive();
+      localStorage.removeItem('auth_active');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    // 1. Initial pre-warm ping immediately when page loads
+    pingServer();
+
+    // 2. Continuous keep-alive interval every 5 minutes while browser tab is open
+    keepAliveRef.current = setInterval(pingServer, KEEP_ALIVE_INTERVAL_MS);
+
+    // 3. Tab visibility change ping — when user refocuses the tab, ping immediately
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        pingServer();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // 4. Validate auth session
     checkAuth();
-    return () => stopKeepAlive(); // cleanup on unmount
+
+    return () => {
+      if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   const login = async (username, password) => {
     const res = await api.login({ username, password });
     if (res.success && res.user) {
       setUser(res.user);
-      startKeepAlive();
+      localStorage.setItem('auth_active', 'true');
       return res;
     }
     throw new Error(res.error || 'Login failed');
@@ -78,7 +91,7 @@ export const AuthProvider = ({ children }) => {
       console.error('Logout error:', err);
     } finally {
       setUser(null);
-      stopKeepAlive();
+      localStorage.removeItem('auth_active');
     }
   };
 

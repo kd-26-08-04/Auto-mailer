@@ -109,8 +109,10 @@ export function App() {
   if (loading) {
     return (
       <div className="auth-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-        <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
-          <h2>Loading...</h2>
+        <div className="card" style={{ padding: '2.5rem', textAlign: 'center', maxWidth: '360px', width: '90%' }}>
+          <div className="spinner" style={{ margin: '0 auto 1.25rem', width: '36px', height: '36px' }}></div>
+          <h3 style={{ margin: '0 0 0.5rem', fontWeight: 600 }}>AutoMailer</h3>
+          <p style={{ margin: 0, fontSize: '0.875rem', opacity: 0.7 }}>Restoring your session...</p>
         </div>
       </div>
     );
