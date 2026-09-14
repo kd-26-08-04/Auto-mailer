@@ -339,13 +339,20 @@ def check_login():
 
     if not request.endpoint:
         return
-    allowed_routes = ['login', 'register', 'api_auth_me', 'static', 'track_open', 'track_open_by_log', 'track_click', 'favicon', 'health']
+    allowed_routes = ['index', 'login', 'register', 'api_auth_me', 'static', 'track_open', 'track_open_by_log', 'track_click', 'favicon', 'health']
     if request.endpoint in allowed_routes:
         return
     if not session.get("user_id"):
-        if request.is_json or request.path.startswith('/api/') or request.headers.get('Accept') == 'application/json':
-            return jsonify({"success": False, "error": "Unauthorized"}), 401
-        return redirect(url_for('login'))
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "status": "ok",
+        "service": "Auto-Mailer API Backend",
+        "version": "1.0.0"
+    })
 
 
 @app.route('/favicon.ico')
@@ -397,24 +404,15 @@ def register():
         confirm_password = data.get("confirm_password", "").strip()
         
         if not full_name or not phone or not username or not password or not confirm_password:
-            if request.is_json or request.headers.get('Accept') == 'application/json':
-                return jsonify({"success": False, "error": "All fields are required."}), 400
-            flash("All fields are required.", "error")
-            return render_template("register.html")
+            return jsonify({"success": False, "error": "All fields are required."}), 400
             
         if password != confirm_password:
-            if request.is_json or request.headers.get('Accept') == 'application/json':
-                return jsonify({"success": False, "error": "Passwords do not match."}), 400
-            flash("Passwords do not match. Please try again.", "error")
-            return render_template("register.html")
+            return jsonify({"success": False, "error": "Passwords do not match."}), 400
             
         db = get_db()
         existing = db.users.find_one({"username": username})
         if existing:
-            if request.is_json or request.headers.get('Accept') == 'application/json':
-                return jsonify({"success": False, "error": "Username already exists."}), 400
-            flash("Username already exists.", "error")
-            return render_template("register.html")
+            return jsonify({"success": False, "error": "Username already exists."}), 400
             
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         db.users.insert_one({
@@ -424,14 +422,9 @@ def register():
             "password_hash": hashed,
             "created_at": datetime.utcnow()
         })
-        if request.is_json or request.headers.get('Accept') == 'application/json':
-            return jsonify({"success": True, "message": "Registration successful! Please login."})
-        flash("Registration successful! Please login.", "success")
-        return redirect(url_for("login"))
+        return jsonify({"success": True, "message": "Registration successful! Please login."})
         
-    if session.get("user_id") and not (request.is_json or request.headers.get('Accept') == 'application/json'):
-        return redirect(url_for("index"))
-    return render_template("register.html")
+    return jsonify({"message": "Auto-Mailer Register API Endpoint"})
 
 
 @app.route("/login", methods=["GET", "POST", "OPTIONS"])
@@ -448,24 +441,27 @@ def login():
             session["user_id"] = str(user["_id"])
             session["username"] = user["username"]
             session["full_name"] = user.get("full_name", user["username"])
-            if request.is_json or request.headers.get('Accept') == 'application/json':
-                return jsonify({
-                    "success": True,
-                    "user": {
-                        "user_id": str(user["_id"]),
-                        "username": user["username"],
-                        "full_name": user.get("full_name", user["username"])
-                    }
-                })
-            return redirect(url_for("index"))
+            return jsonify({
+                "success": True,
+                "user": {
+                    "user_id": str(user["_id"]),
+                    "username": user["username"],
+                    "full_name": user.get("full_name", user["username"])
+                }
+            })
         else:
-            if request.is_json or request.headers.get('Accept') == 'application/json':
-                return jsonify({"success": False, "error": "Invalid username or password."}), 401
-            flash("Invalid credentials.", "error")
+            return jsonify({"success": False, "error": "Invalid username or password."}), 401
             
-    if session.get("user_id") and not (request.is_json or request.headers.get('Accept') == 'application/json'):
-        return redirect(url_for("index"))
-    return render_template("login.html")
+    if session.get("user_id"):
+        return jsonify({
+            "authenticated": True,
+            "user": {
+                "user_id": session.get("user_id"),
+                "username": session.get("username"),
+                "full_name": session.get("full_name")
+            }
+        })
+    return jsonify({"message": "Auto-Mailer Login API Endpoint"})
 
 
 @app.route("/logout", methods=["GET", "POST", "OPTIONS"])
