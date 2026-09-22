@@ -58,8 +58,9 @@ def _utc_now_iso() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
-def _local_now() -> datetime:
-    tz_offset_hours = float(os.environ.get("TIMEZONE_OFFSET_HOURS", "5.5"))
+def _local_now(tz_offset_hours: Optional[float] = None) -> datetime:
+    if tz_offset_hours is None:
+        tz_offset_hours = float(os.environ.get("TIMEZONE_OFFSET_HOURS", "5.5"))
     return datetime.utcnow() + timedelta(hours=tz_offset_hours)
 
 
@@ -294,22 +295,41 @@ def _parse_recipients_file(file_path: str) -> List[Dict[str, Any]]:
 _parse_csv_recipients = _parse_recipients_file
 
 
+_last_imap_check_time: Dict[str, float] = {}
+
+
+
+
 def _render_template(template: str, data: Dict[str, Any]) -> str:
-    """First resolves spintax, then performs {field} interpolation using Python's format_map."""
-    spintax_resolved = resolve_spintax(template)
-    class SafeDict(dict):
-        def __missing__(self, key: str) -> str:
-            return ""
-    # Make keys lowercase matching for flexibility
-    safe_data = {k.lower(): v for k, v in data.items()}
-    # Also keep original keys
+    """First resolves spintax, then safely interpolates {field} / {{field}} tokens without corrupting CSS or HTML."""
+    if not template:
+        return ""
+    text = resolve_spintax(template)
+    safe_data = {str(k).lower(): str(v if v is not None else "") for k, v in data.items()}
     for k, v in data.items():
-        safe_data[k] = v
-    return spintax_resolved.format_map(SafeDict(safe_data))
+        safe_data[str(k)] = str(v if v is not None else "")
+
+    def repl(m: re.Match) -> str:
+        var_name = m.group(1).strip()
+        var_name_lower = var_name.lower()
+        if var_name in safe_data:
+            return safe_data[var_name]
+        if var_name_lower in safe_data:
+            return safe_data[var_name_lower]
+        return ""
+
+    # Replace {var} or {{var}} where var is an identifier name
+    return re.sub(r'\{{1,2}\s*([a-zA-Z0-9_]+)\s*\}{1,2}', repl, text)
 
 
-def check_inbox_replies(engine: EngineConfig) -> Dict[str, Any]:
+def check_inbox_replies(engine: EngineConfig, force: bool = False) -> Dict[str, Any]:
     """Connects to IMAP inbox, scans recent emails for replies from recipients, and updates DB."""
+    global _last_imap_check_time
+    user_key = str(engine.user_id)
+    now_ts = time.time()
+    if not force and user_key in _last_imap_check_time and (now_ts - _last_imap_check_time[user_key]) < 300:
+        return {"status": "skipped", "message": "IMAP scan cooldown active (checked recently)", "replied_count": 0}
+
     username = engine.imap_username or engine.from_email
     password = engine.imap_password or engine.smtp_app_password
     if not username or not password:
@@ -324,6 +344,7 @@ def check_inbox_replies(engine: EngineConfig) -> Dict[str, Any]:
         for doc in db.recipients.find({"user_id": engine.user_id}, {"email": 1})
     )
     if not user_recipients:
+        _last_imap_check_time[user_key] = now_ts
         return {"status": "ok", "message": "No recipients found to check", "replied_count": 0}
     
     replied_emails = set()
@@ -337,13 +358,31 @@ def check_inbox_replies(engine: EngineConfig) -> Dict[str, Any]:
         
         if typ == "OK" and data and data[0]:
             msg_ids = data[0].split()
-            # Scan last 150 headers
-            for m_id in msg_ids[-150:]:
-                try:
-                    _, msg_data = mail.fetch(m_id, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
-                    if not msg_data or not msg_data[0] or not isinstance(msg_data[0], tuple):
+            target_ids = msg_ids[-150:]
+            # Try single batch fetch first for high performance
+            fetched_items = []
+            try:
+                if target_ids:
+                    id_set_str = b",".join(target_ids)
+                    _, batch_data = mail.fetch(id_set_str, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+                    if batch_data:
+                        fetched_items = [item for item in batch_data if isinstance(item, tuple) and len(item) > 1]
+            except Exception:
+                fetched_items = []
+
+            # Fallback to individual fetch if batch failed
+            if not fetched_items:
+                for m_id in target_ids:
+                    try:
+                        _, msg_data = mail.fetch(m_id, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+                        if msg_data and isinstance(msg_data[0], tuple):
+                            fetched_items.append(msg_data[0])
+                    except Exception:
                         continue
-                    msg = email.message_from_bytes(msg_data[0][1])
+
+            for item in fetched_items:
+                try:
+                    msg = email.message_from_bytes(item[1])
                     from_header = msg.get("From", "")
                     sender_name, sender_email = email.utils.parseaddr(from_header)
                     sender_email = sender_email.strip().lower()
@@ -354,6 +393,7 @@ def check_inbox_replies(engine: EngineConfig) -> Dict[str, Any]:
         
         mail.close()
         mail.logout()
+        _last_imap_check_time[user_key] = now_ts
     except Exception as e:
         return {"status": "error", "message": f"IMAP connection failed: {str(e)}", "replied_count": 0}
     
@@ -369,6 +409,11 @@ def check_inbox_replies(engine: EngineConfig) -> Dict[str, Any]:
             db.send_log.update_many(
                 {"user_id": engine.user_id, "recipient_id": {"$in": rec_ids}},
                 {"$set": {"replied": True}}
+            )
+            # Also update sequence enrollments if any are active
+            db.enrollments.update_many(
+                {"user_id": engine.user_id, "recipient_id": {"$in": rec_ids}, "status": {"$in": ["active", "processing"]}},
+                {"$set": {"status": "stopped_replied", "updated_at": now_iso}}
             )
         marked_count += res.modified_count
         

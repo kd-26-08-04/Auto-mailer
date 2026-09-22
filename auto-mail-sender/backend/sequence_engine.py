@@ -869,20 +869,31 @@ def _compute_next_send_after_step(
 
 def _stop_enrollment(enrollment_id: ObjectId, status: str, sequence_id: ObjectId) -> None:
     db = get_db()
-    db.enrollments.update_one(
-        {"_id": enrollment_id},
+    # Check current status first so we only decrement stats.active if it was active or processing
+    prev = db.enrollments.find_one_and_update(
+        {"_id": enrollment_id, "status": {"$in": ["active", "processing"]}},
         {"$set": {"status": status, "updated_at": _utc_now_iso()}},
+        return_document=ReturnDocument.BEFORE,
     )
+    if not prev:
+        db.enrollments.update_one(
+            {"_id": enrollment_id},
+            {"$set": {"status": status, "updated_at": _utc_now_iso()}},
+        )
+        return
+
     inc_fields: Dict[str, int] = {"stats.active": -1}
     if status == "stopped_replied":
         inc_fields["stats.replied"] = 1
     elif status == "completed":
         inc_fields["stats.completed"] = 1
+    elif status == "stopped_failed":
+        inc_fields["stats.failed"] = 1
     db.sequences.update_one({"_id": sequence_id}, {"$inc": inc_fields, "$set": {"updated_at": _utc_now_iso()}})
 
 
 def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_sleep: bool = True) -> Dict[str, Any]:
-    """Process all due sequence sends. Safe to call from cron every minute."""
+    """Process all due sequence sends with atomic claiming. Safe to call concurrently from multiple workers/crons."""
     init_sequence_db()
     db = get_db()
     now = _local_now()
@@ -902,6 +913,19 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
     user_sent_today: Dict[str, int] = {}
     user_last_send: Dict[str, datetime] = {}
     reply_checked_users: set = set()
+
+    # Reclaim stale processing locks (e.g. crashed worker process > 10m ago)
+    try:
+        stale_cutoff = (_local_now() - timedelta(minutes=10)).isoformat(timespec="seconds")
+        db.enrollments.update_many(
+            {
+                "status": "processing",
+                "processing_started_at": {"$lte": stale_cutoff},
+            },
+            {"$set": {"status": "active"}},
+        )
+    except Exception:
+        pass
 
     for seq in active_sequences:
         if summary["processed"] >= max_per_run:
@@ -940,29 +964,9 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
             skip_notes.append(f"{seq.get('name', sequence_id)}: {exc}")
             continue
 
-        # Exact user-configured delay between sends (no random jitter)
         delay_sec = int(settings.get("delay_sec", 60))
 
-        due_enrollments = list(
-            db.enrollments.find(
-                {
-                    "sequence_id": sequence_id,
-                    "status": "active",
-                    "next_send_at": {"$lte": now_iso},
-                }
-            ).sort("next_send_at", 1).limit(settings["daily_limit"])
-        )
-        if not due_enrollments:
-            pending = db.enrollments.find_one(
-                {"sequence_id": sequence_id, "status": "active", "next_send_at": {"$gt": now_iso}},
-                sort=[("next_send_at", 1)],
-            )
-            if pending and pending.get("next_send_at"):
-                skip_notes.append(
-                    f"{seq.get('name', sequence_id)}: next send at {pending['next_send_at']}"
-                )
-
-        for enrollment in due_enrollments:
+        while True:
             if summary["processed"] >= max_per_run:
                 break
             if user_sent_today[user_id] >= settings["daily_limit"]:
@@ -979,6 +983,34 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                 elapsed = (_local_now() - last).total_seconds()
                 if elapsed < delay_sec:
                     break
+
+            # ATOMIC CLAIM: Find and lock one due enrollment
+            enrollment = db.enrollments.find_one_and_update(
+                {
+                    "sequence_id": sequence_id,
+                    "status": "active",
+                    "next_send_at": {"$lte": now_iso},
+                },
+                {
+                    "$set": {
+                        "status": "processing",
+                        "processing_started_at": _local_now().isoformat(timespec="seconds"),
+                        "updated_at": _utc_now_iso(),
+                    }
+                },
+                sort=[("next_send_at", 1)],
+                return_document=ReturnDocument.AFTER,
+            )
+            if not enrollment:
+                pending = db.enrollments.find_one(
+                    {"sequence_id": sequence_id, "status": "active", "next_send_at": {"$gt": now_iso}},
+                    sort=[("next_send_at", 1)],
+                )
+                if pending and pending.get("next_send_at"):
+                    skip_notes.append(
+                        f"{seq.get('name', sequence_id)}: next send at {pending['next_send_at']}"
+                    )
+                break
 
             summary["processed"] += 1
             enrollment_id = enrollment["_id"]
@@ -1021,6 +1053,7 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                         {"_id": enrollment_id},
                         {
                             "$set": {
+                                "status": "active",
                                 "current_step": next_step,
                                 "next_send_at": next_at.isoformat(timespec="seconds") if next_at else None,
                                 "updated_at": _utc_now_iso(),
@@ -1108,7 +1141,7 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                         upsert=True,
                     )
                 except Exception as log_exc:
-                    print(f"[send_log warning] Failed to update send_log: {log_exc}")
+                    pass
 
                 user_sent_today[user_id] += 1
                 user_last_send[user_id] = _local_now()
@@ -1124,21 +1157,17 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
 
                 next_step = step_index + 1
                 if next_step >= len(steps):
+                    _stop_enrollment(enrollment_id, "completed", sequence_id)
                     db.enrollments.update_one(
                         {"_id": enrollment_id},
                         {
                             "$set": {
                                 "current_step": next_step,
                                 "last_sent_at": sent_at,
-                                "status": "completed",
                                 "next_send_at": None,
                                 "updated_at": _utc_now_iso(),
                             }
                         },
-                    )
-                    db.sequences.update_one(
-                        {"_id": sequence_id},
-                        {"$inc": {"stats.active": -1, "stats.completed": 1}, "$set": {"updated_at": _utc_now_iso()}},
                     )
                 else:
                     next_at = _compute_next_send_after_step(settings, steps, next_step, _local_now())
@@ -1146,6 +1175,7 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                         {"_id": enrollment_id},
                         {
                             "$set": {
+                                "status": "active",
                                 "current_step": next_step,
                                 "last_sent_at": sent_at,
                                 "next_send_at": next_at.isoformat(timespec="seconds") if next_at else None,
@@ -1181,7 +1211,13 @@ def process_due_sends(tracking_base_url: str = "", max_per_run: int = 50, sync_s
                     retry_at = _local_now() + timedelta(minutes=min(attempt * 2, 30))
                     db.enrollments.update_one(
                         {"_id": enrollment_id},
-                        {"$set": {"next_send_at": retry_at.isoformat(timespec="seconds"), "updated_at": _utc_now_iso()}},
+                        {
+                            "$set": {
+                                "status": "active",
+                                "next_send_at": retry_at.isoformat(timespec="seconds"),
+                                "updated_at": _utc_now_iso(),
+                            }
+                        },
                     )
 
             if sync_sleep and send_succeeded:

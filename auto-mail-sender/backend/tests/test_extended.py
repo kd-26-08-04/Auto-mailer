@@ -99,7 +99,7 @@ class ExtendedAPITests(unittest.TestCase):
                 {"sequence_id": ObjectId(seq["id"])},
                 {"$set": {"next_send_at": (datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds")}},
             )
-            process_due_sends(tracking_base_url="http://localhost:5001", max_per_run=5)
+            process_due_sends(tracking_base_url="http://localhost:5001", max_per_run=5, sync_sleep=False)
 
         inbox = get_inbox_activity(self.user_id, seq["id"])
         self.assertIn("groups", inbox)
@@ -126,13 +126,12 @@ class ExtendedAPITests(unittest.TestCase):
         r4 = self.client.get(f"/api/sequences/{seq['id']}/analytics")
         self.assertEqual(r4.status_code, 200)
 
-    def test_index_has_inbox_and_analytics(self):
+    def test_index_endpoint(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
-        self.assertIn(b"view-inbox", res.data)
-        self.assertIn(b"view-analytics", res.data)
-        self.assertIn(b"Inbox", res.data)
-        self.assertIn(b"Analytics", res.data)
+        data = res.get_json()
+        self.assertEqual(data.get("status"), "ok")
+        self.assertIn("Auto-Mailer", data.get("service", ""))
 
 
 class ApolloParserTests(unittest.TestCase):

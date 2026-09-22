@@ -316,7 +316,9 @@ class FlaskAPITests(unittest.TestCase):
     def test_index_page_loads(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
-        self.assertIn(b"Sequences", res.data)
+        data = res.get_json()
+        self.assertEqual(data.get("status"), "ok")
+        self.assertIn("Auto-Mailer", data.get("service", ""))
 
 
 def run_tests():

@@ -189,10 +189,7 @@ def _start_inline_worker() -> None:
                 print(f"[{stamp}] [sequence-worker] Error (will retry): {exc}")
             time.sleep(interval)
 
-    # Non-daemon: thread keeps running even if main thread is idle.
-    # Email sends continue as long as the Flask process is alive.
-    t = threading.Thread(target=worker_loop, daemon=False, name="sequence-worker")
-    t.daemon = False
+    t = threading.Thread(target=worker_loop, daemon=True, name="sequence-worker")
     t.start()
 
 
